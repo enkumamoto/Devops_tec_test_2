@@ -9,7 +9,7 @@ This project demonstrates a complete **DevOps-oriented cloud infrastructure** on
 
 ## 🚀 Architecture Overview
 
-![Architecture Diagram](docs/architecture.png)
+![Architecture Diagram](~/docs/architecture.png)
 
 ### High-level flow
 
