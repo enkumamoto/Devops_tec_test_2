@@ -1,10 +1,4 @@
-Perfeito 😄🚀
-Abaixo está o **README.md completo em inglês**, já no nível **“difícil reprovar”**, pronto para **colar diretamente no repositório**
-`devops-technical-test-azure`.
-
----
-
-# DevOps Technical Test – Azure
+# DevOps Technical Test
 
 ## 1. Project Overview
 
