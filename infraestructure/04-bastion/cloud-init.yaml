@@ -1,0 +1,17 @@
+package_update: true
+packages:
+  - docker.io
+  - docker-compose
+  - puppet-agent
+
+runcmd:
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ${admin_username}
+
+  - docker run -d \
+    --name pgadmin \
+    -p 5050:80 \
+    -e PGADMIN_DEFAULT_EMAIL=admin@local.dev \
+    -e PGADMIN_DEFAULT_PASSWORD=admin123 \
+    dpage/pgadmin4

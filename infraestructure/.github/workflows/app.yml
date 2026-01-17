@@ -1,0 +1,39 @@
+name: App CI/CD
+
+on:
+  push:
+    paths:
+      - app/**
+      - k8s/**
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build & Push Docker Image
+        run: |
+          az acr login --name ${{ secrets.ACR_NAME }}
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/fastapi-app:latest app
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/fastapi-app:latest
+
+      - name: Deploy to AKS
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ secrets.AKS_RG }} \
+            --name ${{ secrets.AKS_NAME }} \
+            --overwrite-existing
+
+          kubectl apply -f k8s/
+
+      - name: Deploy to AKS
+        run: |
+          kubectl apply -f k8s/keyvault/
+          kubectl apply -f k8s/

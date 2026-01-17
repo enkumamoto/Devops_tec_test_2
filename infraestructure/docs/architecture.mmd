@@ -1,0 +1,33 @@
+flowchart TB
+    Dev[Developer] -->|Git Push| GH[GitHub Repository]
+
+    GH -->|workflow_dispatch| Bootstrap[bootstrap.yml]
+    Bootstrap -->|Creates| StateRG[RG Terraform State]
+    StateRG --> Storage[Blob Storage tfstate]
+
+    Bootstrap -->|success| Infra[infra.yml]
+
+    Infra --> Net[01 - Network]
+    Infra --> AKS[02 - AKS]
+    Infra --> DB[03 - PostgreSQL Flexible Server]
+    Infra --> Bastion[04 - Bastion Host]
+
+    Net --> VNet[VNet]
+    VNet --> SubAKS[AKS Subnet]
+    VNet --> SubDB[Postgres Subnet]
+    VNet --> SubBastion[Bastion Subnet]
+
+    AKS --> ACR[Azure Container Registry]
+    AKS --> KV[Azure Key Vault]
+
+    GH --> AppPipeline[app.yml]
+    AppPipeline --> ACR
+    AppPipeline -->|Deploy| AKS
+
+    AKS -->|Private Access| DB
+
+    Bastion -->|Private Access| DB
+    Bastion --> PgAdmin[pgAdmin Container]
+    Bastion --> Puppet[Puppet Agent]
+
+    KV -->|CSI Driver| AKS

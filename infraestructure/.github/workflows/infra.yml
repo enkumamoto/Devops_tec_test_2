@@ -1,0 +1,75 @@
+name: Terraform Infrastructure
+
+on:
+  workflow_run:
+    workflows: ["Terraform Bootstrap (Backend)"]
+    types:
+      - completed
+  workflow_dispatch:
+
+jobs:
+  terraform:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    env:
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # =========================
+      # 01 - NETWORK
+      # =========================
+      - name: Terraform Init - Network
+        working-directory: infraestructure/01-network
+        run: terraform init
+
+      - name: Terraform Apply - Network
+        working-directory: infraestructure/01-network
+        run: terraform apply -auto-approve
+
+      # =========================
+      # 02 - AKS
+      # =========================
+      - name: Terraform Init - AKS
+        working-directory: infraestructure/02-aks
+        run: terraform init
+
+      - name: Terraform Apply - AKS
+        working-directory: infraestructure/02-aks
+        run: terraform apply -auto-approve
+
+      # =========================
+      # 03 - DATABASE
+      # =========================
+      - name: Terraform Init - Database
+        working-directory: infraestructure/03-database
+        run: terraform init
+
+      - name: Terraform Apply - Database
+        working-directory: infraestructure/03-database
+        run: terraform apply -auto-approve
+
+      # =========================
+      # 04 - BASTION
+      # =========================
+      - name: Terraform Init - Bastion
+        working-directory: infraestructure/04-bastion
+        run: terraform init
+
+      - name: Terraform Apply - Bastion
+        working-directory: infraestructure/04-bastion
+        run: terraform apply -auto-approve

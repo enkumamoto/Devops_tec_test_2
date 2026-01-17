@@ -4,7 +4,7 @@ variable "location" {
 }
 
 variable "resource_group_name" {
-  description = "Resource Group for network resources"
+  description = "Resource group for network resources"
   type        = string
 }
 
@@ -14,13 +14,16 @@ variable "vnet_cidr" {
 }
 
 variable "subnet_aks_cidr" {
-  type = string
+  description = "CIDR for AKS subnet"
+  type        = string
 }
 
 variable "subnet_db_cidr" {
-  type = string
+  description = "CIDR for Database subnet"
+  type        = string
 }
 
 variable "subnet_bastion_cidr" {
-  type = string
+  description = "CIDR for Bastion subnet"
+  type        = string
 }
