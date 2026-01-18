@@ -6,79 +6,233 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment name"
+        required: true
+        default: "dev"
+        type: string
+      tf_action:
+        description: "Terraform action"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+env:
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+  TF_ACTION: ${{ github.event.inputs.tf_action || 'apply' }}
 
 jobs:
   terraform:
-    runs-on: ubuntu-latest
-
+    # Condição de execução
     if: |
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
 
-    env:
-      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+    runs-on: ubuntu-latest
+    environment: ${{ env.ENVIRONMENT }}
+
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.5"
+          terraform_wrapper: false
 
-      - name: Azure Login (Service Principal)
+      # =========================
+      # 1. AZURE AUTHENTICATION
+      # =========================
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      # =========================
+      # 2. DYNAMIC BACKEND CONFIGURATION
+      # =========================
+      - name: Get Bootstrap Outputs
+        id: bootstrap-outputs
         run: |
-          az login \
-            --service-principal \
-            --username "$ARM_CLIENT_ID" \
-            --password "$ARM_CLIENT_SECRET" \
-            --tenant "$ARM_TENANT_ID"
-
-          az account set \
-            --subscription "$ARM_SUBSCRIPTION_ID"
+          # Em uma execução real, pegaria dos outputs do workflow anterior
+          # Para workflow_dispatch, usar defaults ou secrets
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "Usando valores do GitHub Secrets para workflow_dispatch"
+            echo "RESOURCE_GROUP_NAME=${{ secrets.TF_STATE_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
+            echo "STORAGE_ACCOUNT_NAME=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
+            echo "CONTAINER_NAME=${{ secrets.TF_STATE_CONTAINER }}" >> $GITHUB_OUTPUT
+          else
+            # Em produção, pegaria do evento workflow_run
+            echo "Workflow run detected - outputs should come from bootstrap"
+            # Placeholder - na prática você precisaria da API do GitHub
+            echo "RESOURCE_GROUP_NAME=${{ secrets.TF_STATE_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
+            echo "STORAGE_ACCOUNT_NAME=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
+            echo "CONTAINER_NAME=${{ secrets.TF_STATE_CONTAINER }}" >> $GITHUB_OUTPUT
+          fi
 
       # =========================
-      # 01 - NETWORK
+      # 3. MÓDULO 01 - NETWORK
       # =========================
+      - name: Configure Network Module Backend
+        id: config-network
+        working-directory: infraestructure/01-network
+        run: |
+          # Se usar placeholders, substituir
+          if grep -q "__TF_BACKEND_" backend.tf; then
+            echo "Substituindo placeholders no backend.tf"
+            sed -i "s|__TF_BACKEND_RESOURCE_GROUP__|${{ steps.bootstrap-outputs.outputs.RESOURCE_GROUP_NAME }}|g" backend.tf
+            sed -i "s|__TF_BACKEND_STORAGE_ACCOUNT__|${{ steps.bootstrap-outputs.outputs.STORAGE_ACCOUNT_NAME }}|g" backend.tf
+            sed -i "s|__TF_BACKEND_CONTAINER__|${{ steps.bootstrap-outputs.outputs.CONTAINER_NAME }}|g" backend.tf
+          fi
+
+          # Configuração do backend via CLI
+          cat > backend.hcl << EOF
+          resource_group_name  = "${{ steps.bootstrap-outputs.outputs.RESOURCE_GROUP_NAME }}"
+          storage_account_name = "${{ steps.bootstrap-outputs.outputs.STORAGE_ACCOUNT_NAME }}"
+          container_name       = "${{ steps.bootstrap-outputs.outputs.CONTAINER_NAME }}"
+          key                  = "network.tfstate"
+          EOF
+
       - name: Terraform Init - Network
         working-directory: infraestructure/01-network
-        run: terraform init -input=false
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ steps.bootstrap-outputs.outputs.RESOURCE_GROUP_NAME }}" \
+            -backend-config="storage_account_name=${{ steps.bootstrap-outputs.outputs.STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="container_name=${{ steps.bootstrap-outputs.outputs.CONTAINER_NAME }}" \
+            -backend-config="key=network.tfstate" \
+            -input=false \
+            -reconfigure
 
-      - name: Terraform Apply - Network
+      - name: Terraform Plan - Network
         working-directory: infraestructure/01-network
-        run: terraform apply -auto-approve -input=false
+        run: terraform plan -out=tfplan-network -input=false
+
+      - name: Terraform Apply - Network (if approved)
+        if: env.TF_ACTION == 'apply'
+        working-directory: infraestructure/01-network
+        run: terraform apply tfplan-network -input=false
 
       # =========================
-      # 02 - AKS
+      # 4. MÓDULO 02 - AKS (DEPENDE DA REDE)
       # =========================
-      - name: Terraform Init - AKS
+      - name: Get Network Outputs
+        id: network-outputs
+        working-directory: infraestructure/01-network
+        run: |
+          if [ -f terraform.tfstate ]; then
+            # Extrair outputs do estado
+            VNET_ID=$(terraform output -raw vnet_id 2>/dev/null || echo "")
+            AKS_SUBNET_ID=$(terraform output -raw aks_subnet_id 2>/dev/null || echo "")
+            
+            echo "VNET_ID=$VNET_ID" >> $GITHUB_ENV
+            echo "AKS_SUBNET_ID=$AKS_SUBNET_ID" >> $GITHUB_ENV
+            echo "VNET_ID=$VNET_ID" >> $GITHUB_OUTPUT
+            echo "AKS_SUBNET_ID=$AKS_SUBNET_ID" >> $GITHUB_OUTPUT
+          else
+            echo "Estado da rede não encontrado"
+            exit 1
+          fi
+
+      - name: Configure AKS Module Backend
         working-directory: infraestructure/02-aks
-        run: terraform init -input=false
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ steps.bootstrap-outputs.outputs.RESOURCE_GROUP_NAME }}" \
+            -backend-config="storage_account_name=${{ steps.bootstrap-outputs.outputs.STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="container_name=${{ steps.bootstrap-outputs.outputs.CONTAINER_NAME }}" \
+            -backend-config="key=aks.tfstate" \
+            -input=false \
+            -reconfigure
 
-      - name: Terraform Apply - AKS
+      - name: Terraform Plan - AKS
         working-directory: infraestructure/02-aks
-        run: terraform apply -auto-approve -input=false
+        env:
+          TF_VAR_vnet_id: ${{ env.VNET_ID }}
+          TF_VAR_aks_subnet_id: ${{ env.AKS_SUBNET_ID }}
+        run: terraform plan -out=tfplan-aks -input=false
+
+      - name: Terraform Apply - AKS (if approved)
+        if: env.TF_ACTION == 'apply'
+        working-directory: infraestructure/02-aks
+        run: terraform apply tfplan-aks -input=false
 
       # =========================
-      # 03 - DATABASE
+      # 5. MÓDULO 03 - DATABASE (DEPENDE DA REDE)
       # =========================
-      - name: Terraform Init - Database
+      - name: Configure Database Module Backend
         working-directory: infraestructure/03-database
-        run: terraform init -input=false
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ steps.bootstrap-outputs.outputs.RESOURCE_GROUP_NAME }}" \
+            -backend-config="storage_account_name=${{ steps.bootstrap-outputs.outputs.STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="container_name=${{ steps.bootstrap-outputs.outputs.CONTAINER_NAME }}" \
+            -backend-config="key=database.tfstate" \
+            -input=false \
+            -reconfigure
 
-      - name: Terraform Apply - Database
+      - name: Terraform Plan - Database
         working-directory: infraestructure/03-database
-        run: terraform apply -auto-approve -input=false
+        env:
+          TF_VAR_vnet_id: ${{ env.VNET_ID }}
+        run: terraform plan -out=tfplan-database -input=false
+
+      - name: Terraform Apply - Database (if approved)
+        if: env.TF_ACTION == 'apply'
+        working-directory: infraestructure/03-database
+        run: terraform apply tfplan-database -input=false
 
       # =========================
-      # 04 - BASTION
+      # 6. MÓDULO 04 - BASTION (DEPENDE DA REDE)
       # =========================
-      - name: Terraform Init - Bastion
+      - name: Configure Bastion Module Backend
         working-directory: infraestructure/04-bastion
-        run: terraform init -input=false
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ steps.bootstrap-outputs.outputs.RESOURCE_GROUP_NAME }}" \
+            -backend-config="storage_account_name=${{ steps.bootstrap-outputs.outputs.STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="container_name=${{ steps.bootstrap-outputs.outputs.CONTAINER_NAME }}" \
+            -backend-config="key=bastion.tfstate" \
+            -input=false \
+            -reconfigure
 
-      - name: Terraform Apply - Bastion
+      - name: Terraform Plan - Bastion
         working-directory: infraestructure/04-bastion
-        run: terraform apply -auto-approve -input=false
+        env:
+          TF_VAR_vnet_id: ${{ env.VNET_ID }}
+        run: terraform plan -out=tfplan-bastion -input=false
+
+      - name: Terraform Apply - Bastion (if approved)
+        if: env.TF_ACTION == 'apply'
+        working-directory: infraestructure/04-bastion
+        run: terraform apply tfplan-bastion -input=false
+
+  # Job de validação (opcional)
+  validate:
+    runs-on: ubuntu-latest
+    needs: [terraform]
+    if: always()
+
+    steps:
+      - name: Check Terraform Results
+        run: |
+          if [ "${{ needs.terraform.result }}" == "success" ]; then
+            echo "✅ Todos os módulos Terraform foram aplicados com sucesso"
+          else
+            echo "❌ Falha na execução do Terraform"
+            exit 1
+          fi
