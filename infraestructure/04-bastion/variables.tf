@@ -112,3 +112,22 @@ variable "os_disk_type" {
     error_message = "Invalid OS disk type."
   }
 }
+
+variable "generate_ssh_key" {
+  description = "Generate SSH key pair automatically"
+  type        = bool
+  default     = true
+}
+
+variable "ssh_public_key_content" {
+  description = "SSH public key content (alternative to file path)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "ssh_public_key_path" {
+  description = "Path to SSH public key file (if not generating)"
+  type        = string
+  default     = "~/.ssh/id_rsa.pub"
+}

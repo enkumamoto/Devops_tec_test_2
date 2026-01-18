@@ -1,31 +1,70 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
 import psycopg2
+import psycopg2.pool
 import os
 
-app = FastAPI()
+db_pool: psycopg2.pool.SimpleConnectionPool | None = None
 
-DB_HOST = os.getenv("DB_HOST")
-DB_NAME = os.getenv("DB_NAME")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
 
-def get_connection():
-    return psycopg2.connect(
-        host=DB_HOST,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD
+def get_db_config():
+    return {
+        "host": os.getenv("DB_HOST"),
+        "dbname": os.getenv("DB_NAME"),
+        "user": os.getenv("DB_USER"),
+        "password": os.getenv("DB_PASSWORD"),
+        "sslmode": os.getenv("DB_SSLMODE", "require"),
+    }
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global db_pool
+
+    config = get_db_config()
+
+    missing = [k for k, v in config.items() if v is None]
+    if missing:
+        raise RuntimeError(f"Missing environment variables: {missing}")
+
+    db_pool = psycopg2.pool.SimpleConnectionPool(
+        minconn=1,
+        maxconn=5,
+        **config,
     )
 
-@app.get("/")
+    yield  # 🚀 aplicação rodando
+
+    if db_pool:
+        db_pool.closeall()
+
+
+app = FastAPI(
+    title="FastAPI DevOps App",
+    lifespan=lifespan,
+)
+
+
+@app.get("/health")
 def healthcheck():
     return {"status": "ok"}
 
-@app.get("/db")
-def db_check():
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT 1")
-    cur.close()
-    conn.close()
-    return {"database": "connected"}
+
+@app.get("/health/db")
+def db_healthcheck():
+    if not db_pool:
+        raise HTTPException(status_code=500, detail="DB pool not initialized")
+
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        cur.close()
+        return {"database": "connected"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            db_pool.putconn(conn)
