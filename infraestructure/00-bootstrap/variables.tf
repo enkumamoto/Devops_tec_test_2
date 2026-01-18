@@ -1,6 +1,3 @@
-# Variables for Bootstrap module
-# These variables configure the Terraform remote backend resources
-
 variable "subscription_id" {
   description = "Azure Subscription ID where resources will be created"
   type        = string

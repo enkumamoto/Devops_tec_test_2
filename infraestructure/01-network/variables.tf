@@ -8,22 +8,37 @@ variable "resource_group_name" {
   type        = string
 }
 
-variable "vnet_cidr" {
+variable "vnet_address_space" {
   description = "CIDR block for VNet"
-  type        = string
+  type        = list(string)
 }
 
-variable "subnet_aks_cidr" {
+variable "aks_subnet_address_prefixes" {
   description = "CIDR for AKS subnet"
-  type        = string
+  type        = list(string)
 }
 
-variable "subnet_db_cidr" {
+variable "database_subnet_address_prefixes" {
   description = "CIDR for Database subnet"
+  type        = list(string)
+}
+
+variable "bastion_subnet_address_prefixes" {
+  description = "CIDR for Bastion subnet"
+  type        = list(string)
+}
+
+variable "environment" {
+  description = "Environment name"
   type        = string
 }
 
-variable "subnet_bastion_cidr" {
-  description = "CIDR for Bastion subnet"
+variable "tags" {
+  description = "Tags for resources"
+  type        = map(string)
+}
+
+variable "vnet_name" {
+  description = "Name for VNet"
   type        = string
 }

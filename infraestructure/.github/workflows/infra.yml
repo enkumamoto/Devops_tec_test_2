@@ -28,7 +28,6 @@ env:
 
 jobs:
   terraform:
-    # Condição de execução
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
@@ -85,19 +84,16 @@ jobs:
           fi
 
       # =========================
-      # 3. MÓDULO 01 - NETWORK
+      # 3. NETWORK
       # =========================
       - name: Configure Network Module Backend
         id: config-network
         working-directory: infraestructure/01-network
         run: |
-          # Se usar placeholders, substituir
-          if grep -q "__TF_BACKEND_" backend.tf; then
-            echo "Substituindo placeholders no backend.tf"
-            sed -i "s|__TF_BACKEND_RESOURCE_GROUP__|${{ steps.bootstrap-outputs.outputs.RESOURCE_GROUP_NAME }}|g" backend.tf
-            sed -i "s|__TF_BACKEND_STORAGE_ACCOUNT__|${{ steps.bootstrap-outputs.outputs.STORAGE_ACCOUNT_NAME }}|g" backend.tf
-            sed -i "s|__TF_BACKEND_CONTAINER__|${{ steps.bootstrap-outputs.outputs.CONTAINER_NAME }}|g" backend.tf
-          fi
+          cd infraestructure/01-network
+          sed -i "s|__TF_BACKEND_RESOURCE_GROUP__|${{ needs.bootstrap.outputs.resource_group_name }}|g" backend.tf
+          sed -i "s|__TF_BACKEND_STORAGE_ACCOUNT__|${{ needs.bootstrap.outputs.storage_account_name }}|g" backend.tf
+          sed -i "s|__TF_BACKEND_CONTAINER__|${{ needs.bootstrap.outputs.storage_container_name }}|g" backend.tf
 
           # Configuração do backend via CLI
           cat > backend.hcl << EOF
@@ -169,7 +165,14 @@ jobs:
       - name: Terraform Apply - AKS (if approved)
         if: env.TF_ACTION == 'apply'
         working-directory: infraestructure/02-aks
-        run: terraform apply tfplan-aks -input=false
+        env:
+          TF_VAR_subscription_id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          TF_VAR_location: ${{ needs.network.outputs.location }}
+          TF_VAR_environment: ${{ env.ENVIRONMENT }}
+          TF_VAR_vnet_id: ${{ needs.network.outputs.vnet_id }}
+          TF_VAR_aks_subnet_id: ${{ needs.network.outputs.aks_subnet_id }}
+          TF_VAR_resource_group_name: "rg-aks-${{ env.ENVIRONMENT }}"
+        run: terraform apply -auto-approve
 
       # =========================
       # 5. MÓDULO 03 - DATABASE (DEPENDE DA REDE)
