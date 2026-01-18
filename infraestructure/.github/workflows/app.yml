@@ -7,65 +7,213 @@ on:
     paths:
       - "infraestructure/app/**"
       - "infraestructure/k8s/**"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Custom image tag (default: git SHA)"
+        required: false
+        type: string
+
+env:
+  REGISTRY: ${{ secrets.ACR_NAME }}.azurecr.io
+  IMAGE_NAME: fastapi-devops
+  K8S_NAMESPACE: devops-app
 
 jobs:
-  build-and-deploy:
+  # =========================
+  # 1. VALIDATE & TEST
+  # =========================
+  validate:
     runs-on: ubuntu-latest
-
-    env:
-      ACR_NAME: ${{ secrets.ACR_NAME }}
-      AKS_RESOURCE_GROUP: ${{ secrets.AKS_RESOURCE_GROUP }}
-      AKS_CLUSTER_NAME: ${{ secrets.AKS_CLUSTER_NAME }}
-
-      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+    outputs:
+      image_tag: ${{ steps.set-tag.outputs.image_tag }}
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 🔐 Login Azure
+      - name: Set Image Tag
+        id: set-tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            TAG="${{ github.event.inputs.image_tag }}"
+          else
+            TAG=$(git rev-parse --short HEAD)
+          fi
+          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Using image tag: $TAG"
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        working-directory: infraestructure/app
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run Linter
+        working-directory: infraestructure/app
+        run: |
+          pip install black flake8
+          black --check .
+          flake8 .
+
+      - name: Run Tests
+        working-directory: infraestructure/app
+        env:
+          DB_HOST: localhost
+          DB_NAME: testdb
+          DB_USER: testuser
+          DB_PASSWORD: testpass
+          DB_SSLMODE: disable
+        run: |
+          python -m pytest -v
+
+  # =========================
+  # 2. BUILD & PUSH
+  # =========================
+  build:
+    runs-on: ubuntu-latest
+    needs: validate
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_SP_ID }}
+          password: ${{ secrets.ACR_SP_SECRET }}
+
+      - name: Build and Push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: infraestructure/app
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.image_tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+  # =========================
+  # 3. DEPLOY TO AKS
+  # =========================
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [validate, build]
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
       - name: Azure Login
-        run: |
-          az login \
-            --service-principal \
-            --username "$ARM_CLIENT_ID" \
-            --password "$ARM_CLIENT_SECRET" \
-            --tenant "$ARM_TENANT_ID"
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
-          az account set \
-            --subscription "$ARM_SUBSCRIPTION_ID"
-
-      # 🐳 Login no ACR
-      - name: Login to ACR
-        run: az acr login --name $ACR_NAME
-
-      # 🐳 Build & Push
-      - name: Build and Push Docker Image
-        run: |
-          IMAGE_TAG=$(git rev-parse --short HEAD)
-
-          docker build \
-            -t $ACR_NAME.azurecr.io/devops-fastapi:$IMAGE_TAG \
-            infraestructure/app
-
-          docker push \
-            $ACR_NAME.azurecr.io/devops-fastapi:$IMAGE_TAG
-
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-
-      # ☸️ AKS credentials
       - name: Get AKS Credentials
         run: |
           az aks get-credentials \
-            --resource-group $AKS_RESOURCE_GROUP \
-            --name $AKS_CLUSTER_NAME \
+            --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} \
+            --name ${{ secrets.AKS_CLUSTER_NAME }} \
             --overwrite-existing
 
-      # ☸️ Deploy
-      - name: Deploy to AKS
+      - name: Create Namespace if not exists
         run: |
-          sed -i "s|IMAGE_TAG|$IMAGE_TAG|g" infraestructure/k8s/deployment.yaml
-          kubectl apply -f infraestructure/k8s/
+          kubectl create namespace ${{ env.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy Application
+        env:
+          IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
+        run: |
+          # Usar envsubst para template variables
+          export REGISTRY="${{ env.REGISTRY }}"
+          export IMAGE_NAME="${{ env.IMAGE_NAME }}"
+          export NAMESPACE="${{ env.K8S_NAMESPACE }}"
+
+          for file in infraestructure/k8s/*.yaml; do
+            envsubst < "$file" | kubectl apply -n "$NAMESPACE" -f -
+          done
+
+      - name: Wait for Deployment
+        run: |
+          kubectl rollout status deployment/fastapi-app \
+            -n ${{ env.K8S_NAMESPACE }} \
+            --timeout=300s
+
+      - name: Verify Deployment
+        run: |
+          echo "📊 Deployment Status:"
+          kubectl get deployments,svc,pods -n ${{ env.K8S_NAMESPACE }}
+
+          echo "🌐 Testing service..."
+          kubectl wait --for=condition=ready pod -l app=fastapi -n ${{ env.K8S_NAMESPACE }} --timeout=120s
+
+          # Test health endpoint
+          kubectl port-forward svc/fastapi-service 8080:80 -n ${{ env.K8S_NAMESPACE }} &
+          sleep 10
+          curl -f http://localhost:8080/health || echo "Health check failed"
+          pkill -f "port-forward"
+
+  # =========================
+  # 4. ROLLBACK (manual trigger)
+  # =========================
+  rollback:
+    runs-on: ubuntu-latest
+    if: failure() && github.event_name == 'workflow_dispatch'
+    needs: deploy
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Get AKS Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} \
+            --name ${{ secrets.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - name: Rollback Deployment
+        run: |
+          kubectl rollout undo deployment/fastapi-app -n ${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/fastapi-app -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          echo "✅ Rollback completed"

@@ -13,14 +13,16 @@ on:
         required: true
         default: "dev"
         type: string
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
 
 env:
   LOCATION: ${{ github.event.inputs.location || 'eastus' }}
   ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
   RESOURCE_GROUP_NAME: "rg-terraform-state-${{ env.ENVIRONMENT }}"
-
-  # Storage Account precisa ser único globalmente
-  STORAGE_SUFFIX: ${{ github.run_id }}
 
 jobs:
   bootstrap:
@@ -40,90 +42,111 @@ jobs:
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
+      - name: Validate Environment Input
+        run: |
+          VALID_ENVS=("dev" "staging" "prod")
+          if [[ ! " ${VALID_ENVS[@]} " =~ " $ENVIRONMENT " ]]; then
+            echo "❌ Invalid environment: $ENVIRONMENT. Must be one of: ${VALID_ENVS[*]}"
+            exit 1
+          fi
+
       - name: Create Terraform Backend Resources
         id: create-backend
         run: |
-          # Criar Resource Group
+          # 1. Resource Group (idempotent)
           az group create \
-            --name $RESOURCE_GROUP_NAME \
-            --location $LOCATION \
-            --tags "Environment=$ENVIRONMENT" "ManagedBy=GitHubActions" "CreatedBy=Bootstrap"
-
-          # Criar Storage Account (nome único)
-          STORAGE_NAME="tfstatedevops${ENVIRONMENT}$(date +%s | tail -c 6)"
-          STORAGE_NAME=$(echo "$STORAGE_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
-
-          echo "Storage Account Name: $STORAGE_NAME"
-
-          az storage account create \
-            --name "$STORAGE_NAME" \
-            --resource-group "$RESOURCE_GROUP_NAME" \
+            --name "$RESOURCE_GROUP_NAME" \
             --location "$LOCATION" \
-            --sku Standard_LRS \
-            --kind StorageV2 \
-            --https-only true \
-            --allow-blob-public-access false \
-            --min-tls-version TLS1_2 \
-            --tags "Environment=$ENVIRONMENT" "ManagedBy=GitHubActions"
+            --tags "Environment=$ENVIRONMENT" "ManagedBy=GitHubActions" "CreatedBy=Bootstrap" \
+            --output none
 
-          # Criar Container
+          # 2. Generate deterministic storage account name (Azure naming rules)
+          #    - Max 24 chars, lowercase, no hyphens
+          #    - Pattern: tfstate<env><short-sha><suffix>
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          TIMESTAMP=$(date +%m%d)
+          STORAGE_BASE="tfstate${ENVIRONMENT}${SHORT_SHA}${TIMESTAMP}"
+          STORAGE_NAME=$(echo "$STORAGE_BASE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g' | cut -c1-24)
+
+          echo "📦 Storage Account Name: $STORAGE_NAME"
+
+          # 3. Create Storage Account (if not exists)
+          EXISTING_SA=$(az storage account list \
+            --resource-group "$RESOURCE_GROUP_NAME" \
+            --query "[?name=='$STORAGE_NAME'].name" \
+            --output tsv)
+
+          if [ -z "$EXISTING_SA" ]; then
+            az storage account create \
+              --name "$STORAGE_NAME" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --location "$LOCATION" \
+              --sku Standard_LRS \
+              --kind StorageV2 \
+              --https-only true \
+              --allow-blob-public-access false \
+              --min-tls-version TLS1_2 \
+              --tags "Environment=$ENVIRONMENT" "ManagedBy=GitHubActions" \
+              --output none
+            echo "✅ Storage Account created: $STORAGE_NAME"
+          else
+            echo "📌 Storage Account already exists: $STORAGE_NAME"
+          fi
+
+          # 4. Create Container (idempotent)
           az storage container create \
             --name "tfstate" \
             --account-name "$STORAGE_NAME" \
-            --auth-mode login
+            --auth-mode login \
+            --fail-on-exist false \
+            --output none
 
-          # Habilitar versioning
+          # 5. Enable blob versioning (idempotent)
           az storage account blob-service-properties update \
             --account-name "$STORAGE_NAME" \
             --resource-group "$RESOURCE_GROUP_NAME" \
-            --enable-versioning true
+            --enable-versioning true \
+            --output none
 
-          # Configurar network rules (apenas Azure Services)
+          # 6. Set network rules (idempotent)
           az storage account network-rule update \
             --account-name "$STORAGE_NAME" \
             --resource-group "$RESOURCE_GROUP_NAME" \
             --default-action Deny \
-            --bypass AzureServices
+            --bypass AzureServices \
+            --output none
 
-          # Obter Storage Account Key
-          ACCOUNT_KEY=$(az storage account keys list \
-            --resource-group "$RESOURCE_GROUP_NAME" \
-            --account-name "$STORAGE_NAME" \
-            --query '[0].value' \
-            --output tsv)
-
-          # Salvar outputs para próxima workflow
+          # 7. Outputs for next workflows
           echo "TF_STORAGE_ACCOUNT=$STORAGE_NAME" >> $GITHUB_OUTPUT
           echo "TF_RESOURCE_GROUP=$RESOURCE_GROUP_NAME" >> $GITHUB_OUTPUT
           echo "TF_CONTAINER_NAME=tfstate" >> $GITHUB_OUTPUT
           echo "TF_LOCATION=$LOCATION" >> $GITHUB_OUTPUT
           echo "TF_ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_OUTPUT
 
-          # Criar arquivo de backend para os módulos
+      - name: Generate Backend Config File
+        run: |
           cat > backend-config.txt << EOF
-          storage_account_name = "$STORAGE_NAME"
+          # Terraform Backend Configuration
+          # Generated by Bootstrap Pipeline
+          storage_account_name = "${{ steps.create-backend.outputs.TF_STORAGE_ACCOUNT }}"
           container_name       = "tfstate"
-          key                  = "bootstrap.tfstate"
-          resource_group_name  = "$RESOURCE_GROUP_NAME"
+          resource_group_name  = "${{ steps.create-backend.outputs.TF_RESOURCE_GROUP }}"
+          # Note: 'key' is defined per module (network.tfstate, aks.tfstate, etc.)
           EOF
 
-      - name: Upload Backend Config
+          echo "🔐 Backend config generated:"
+          cat backend-config.txt
+
+      - name: Upload Backend Config as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-backend-config
+          name: terraform-backend-${{ env.ENVIRONMENT }}
           path: backend-config.txt
-
-      - name: Set Outputs for Next Workflow
-        run: |
-          echo "STORAGE_ACCOUNT_NAME=$STORAGE_NAME" >> $GITHUB_OUTPUT
-          echo "RESOURCE_GROUP_NAME=$RESOURCE_GROUP_NAME" >> $GITHUB_OUTPUT
-          echo "CONTAINER_NAME=tfstate" >> $GITHUB_OUTPUT
-          echo "LOCATION=$LOCATION" >> $GITHUB_OUTPUT
-          echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          retention-days: 7
 
     outputs:
-      storage_account_name: ${{ steps.create-backend.outputs.STORAGE_ACCOUNT_NAME }}
-      resource_group_name: ${{ steps.create-backend.outputs.RESOURCE_GROUP_NAME }}
-      container_name: ${{ steps.create-backend.outputs.CONTAINER_NAME }}
-      location: ${{ steps.create-backend.outputs.LOCATION }}
-      environment: ${{ steps.create-backend.outputs.ENVIRONMENT }}
+      storage_account_name: ${{ steps.create-backend.outputs.TF_STORAGE_ACCOUNT }}
+      resource_group_name: ${{ steps.create-backend.outputs.TF_RESOURCE_GROUP }}
+      container_name: ${{ steps.create-backend.outputs.TF_CONTAINER_NAME }}
+      location: ${{ steps.create-backend.outputs.TF_LOCATION }}
+      environment: ${{ steps.create-backend.outputs.TF_ENVIRONMENT }}
