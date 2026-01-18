@@ -1,39 +1,71 @@
-name: App CI/CD
+name: Application CI/CD
 
 on:
   push:
+    branches:
+      - main
     paths:
-      - app/**
-      - k8s/**
+      - "infraestructure/app/**"
+      - "infraestructure/k8s/**"
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
+    env:
+      ACR_NAME: ${{ secrets.ACR_NAME }}
+      AKS_RESOURCE_GROUP: ${{ secrets.AKS_RESOURCE_GROUP }}
+      AKS_CLUSTER_NAME: ${{ secrets.AKS_CLUSTER_NAME }}
+
+      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Login to Azure
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Build & Push Docker Image
+      # 🔐 Login Azure
+      - name: Azure Login
         run: |
-          az acr login --name ${{ secrets.ACR_NAME }}
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/fastapi-app:latest app
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/fastapi-app:latest
+          az login \
+            --service-principal \
+            --username "$ARM_CLIENT_ID" \
+            --password "$ARM_CLIENT_SECRET" \
+            --tenant "$ARM_TENANT_ID"
 
-      - name: Deploy to AKS
+          az account set \
+            --subscription "$ARM_SUBSCRIPTION_ID"
+
+      # 🐳 Login no ACR
+      - name: Login to ACR
+        run: az acr login --name $ACR_NAME
+
+      # 🐳 Build & Push
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_TAG=$(git rev-parse --short HEAD)
+
+          docker build \
+            -t $ACR_NAME.azurecr.io/devops-fastapi:$IMAGE_TAG \
+            infraestructure/app
+
+          docker push \
+            $ACR_NAME.azurecr.io/devops-fastapi:$IMAGE_TAG
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+      # ☸️ AKS credentials
+      - name: Get AKS Credentials
         run: |
           az aks get-credentials \
-            --resource-group ${{ secrets.AKS_RG }} \
-            --name ${{ secrets.AKS_NAME }} \
+            --resource-group $AKS_RESOURCE_GROUP \
+            --name $AKS_CLUSTER_NAME \
             --overwrite-existing
 
-          kubectl apply -f k8s/
-
+      # ☸️ Deploy
       - name: Deploy to AKS
         run: |
-          kubectl apply -f k8s/keyvault/
-          kubectl apply -f k8s/
+          sed -i "s|IMAGE_TAG|$IMAGE_TAG|g" infraestructure/k8s/deployment.yaml
+          kubectl apply -f infraestructure/k8s/

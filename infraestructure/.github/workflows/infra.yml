@@ -9,8 +9,11 @@ on:
 
 jobs:
   terraform:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
 
     env:
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
@@ -25,51 +28,57 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Azure Login (Service Principal)
+        run: |
+          az login \
+            --service-principal \
+            --username "$ARM_CLIENT_ID" \
+            --password "$ARM_CLIENT_SECRET" \
+            --tenant "$ARM_TENANT_ID"
+
+          az account set \
+            --subscription "$ARM_SUBSCRIPTION_ID"
 
       # =========================
       # 01 - NETWORK
       # =========================
       - name: Terraform Init - Network
         working-directory: infraestructure/01-network
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Apply - Network
         working-directory: infraestructure/01-network
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -input=false
 
       # =========================
       # 02 - AKS
       # =========================
       - name: Terraform Init - AKS
         working-directory: infraestructure/02-aks
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Apply - AKS
         working-directory: infraestructure/02-aks
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -input=false
 
       # =========================
       # 03 - DATABASE
       # =========================
       - name: Terraform Init - Database
         working-directory: infraestructure/03-database
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Apply - Database
         working-directory: infraestructure/03-database
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -input=false
 
       # =========================
       # 04 - BASTION
       # =========================
       - name: Terraform Init - Bastion
         working-directory: infraestructure/04-bastion
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Apply - Bastion
         working-directory: infraestructure/04-bastion
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -input=false

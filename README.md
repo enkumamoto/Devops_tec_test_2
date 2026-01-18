@@ -1,7 +1,4 @@
-# 📘 README.md — FINAL VERSION
-
-````md
-# DevOps Technical Test — Azure
+# DevOps Technical Test
 
 This project demonstrates a complete **DevOps-oriented cloud infrastructure** on **Microsoft Azure**, fully automated using **Terraform** and **GitHub Actions**, following best practices for security, networking, and CI/CD.
 
@@ -9,7 +6,7 @@ This project demonstrates a complete **DevOps-oriented cloud infrastructure** on
 
 ## 🚀 Architecture Overview
 
-![Architecture Diagram](~/docs/architecture.png)
+![Architecture Diagram](docs/architecture.png)
 
 ### High-level flow
 
@@ -104,7 +101,8 @@ infra.yml
    ↓
 app.yml
 ```
-````
+
+```
 
 ---
 
@@ -157,3 +155,4 @@ This project was designed to demonstrate:
 DevOps / Cloud Engineer
 
 ---
+```
