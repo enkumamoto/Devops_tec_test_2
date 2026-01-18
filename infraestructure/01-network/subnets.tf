@@ -10,6 +10,11 @@ resource "azurerm_subnet" "aks" {
     "Microsoft.Storage"
   ]
 
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes        = [tags["LastModified"]]
+  }
+
   depends_on = [azurerm_virtual_network.devops]
 }
 
@@ -18,6 +23,7 @@ resource "azurerm_subnet" "database" {
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.devops.name
   address_prefixes     = var.database_subnet_address_prefixes
+
   service_endpoints = [
     "Microsoft.Storage",
     "Microsoft.KeyVault"
@@ -27,11 +33,14 @@ resource "azurerm_subnet" "database" {
     name = "fs-postgresql-delegation"
 
     service_delegation {
-      name = "Microsoft.DBforPostgreSQL/flexibleServers"
-      actions = [
-        "Microsoft.Network/virtualNetworks/subnets/join/action",
-      ]
+      name    = "Microsoft.DBforPostgreSQL/flexibleServers"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
     }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes        = [tags["LastModified"]]
   }
 
   depends_on = [azurerm_virtual_network.devops]
@@ -42,8 +51,16 @@ resource "azurerm_subnet" "bastion" {
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.devops.name
   address_prefixes     = var.bastion_subnet_address_prefixes
+
   service_endpoints = [
     "Microsoft.Storage",
     "Microsoft.KeyVault"
   ]
+
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes        = [tags["LastModified"]]
+  }
+
+  depends_on = [azurerm_virtual_network.devops]
 }

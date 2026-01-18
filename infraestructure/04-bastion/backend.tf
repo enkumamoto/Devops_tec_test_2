@@ -1,8 +1,10 @@
 terraform {
+  required_version = ">= 1.5.0"
+
   backend "azurerm" {
-    resource_group_name  = "rg-terraform-state"
-    storage_account_name = "tfstateeijidevops01"
-    container_name       = "tfstate"
+    resource_group_name  = "__TF_BACKEND_RESOURCE_GROUP__"
+    storage_account_name = "__TF_BACKEND_STORAGE_ACCOUNT__"
+    container_name       = "__TF_BACKEND_CONTAINER__"
     key                  = "bastion.tfstate"
   }
 
@@ -11,9 +13,24 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
 provider "azurerm" {
-  features {}
+  features {
+    virtual_machine {
+      delete_os_disk_on_deletion     = true
+      graceful_shutdown              = false
+      skip_shutdown_and_force_delete = false
+    }
+    resource_group {
+      prevent_deletion_if_contains_resources = true
+    }
+  }
+
+  subscription_id = var.subscription_id
 }

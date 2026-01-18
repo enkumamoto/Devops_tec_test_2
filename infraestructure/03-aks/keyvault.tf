@@ -107,18 +107,3 @@ resource "random_password" "app_secret" {
   length  = 32
   special = false
 }
-
-output "postgresql_password_secret_id" {
-  value     = azurerm_key_vault_secret.postgresql_password.id
-  sensitive = false
-}
-
-output "key_vault_secrets_created" {
-  description = "List of secret names created in Key Vault"
-  value = [
-    azurerm_key_vault_secret.postgresql_host.name,
-    azurerm_key_vault_secret.postgresql_username.name,
-    azurerm_key_vault_secret.postgresql_password.name,
-    azurerm_key_vault_secret.app_secret_key.name
-  ]
-}

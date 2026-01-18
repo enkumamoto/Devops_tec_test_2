@@ -1,30 +1,114 @@
+variable "subscription_id" {
+  description = "Azure Subscription ID"
+  type        = string
+}
+
 variable "location" {
-  type = string
+  description = "Azure region"
+  type        = string
+}
+
+variable "environment" {
+  description = "Environment name"
+  type        = string
 }
 
 variable "resource_group_name" {
-  type = string
+  description = "Resource Group name for bastion"
+  type        = string
+}
+
+variable "vnet_id" {
+  description = "VNet ID from network remote state"
+  type        = string
+}
+
+variable "bastion_subnet_id" {
+  description = "Subnet ID for bastion"
+  type        = string
+}
+
+variable "aks_subnet_cidr" {
+  description = "AKS subnet CIDR (for NSG rules)"
+  type        = string
 }
 
 variable "vm_name" {
-  type    = string
-  default = "bastion-vm"
+  description = "Bastion VM name"
+  type        = string
 }
 
 variable "vm_size" {
-  type    = string
-  default = "Standard_B2s"
+  description = "Bastion VM size"
+  type        = string
 }
 
 variable "admin_username" {
-  type = string
-}
-
-variable "ssh_public_key" {
-  type = string
-}
-
-variable "allowed_ssh_subnet" {
+  description = "Admin username"
   type        = string
-  description = "Subnet CIDR allowed to SSH (ex: AKS subnet)"
+}
+
+variable "ssh_public_key_path" {
+  description = "SSH public key path"
+  type        = string
+}
+
+variable "generate_ssh_key" {
+  description = "Generate SSH key automatically"
+  type        = bool
+}
+
+variable "pgadmin_enabled" {
+  description = "Enable pgAdmin container"
+  type        = bool
+}
+
+variable "pgadmin_port" {
+  description = "pgAdmin exposed port"
+  type        = number
+}
+
+variable "pgadmin_default_email" {
+  description = "pgAdmin admin email"
+  type        = string
+}
+
+variable "pgadmin_default_password" {
+  description = "pgAdmin admin password"
+  type        = string
+  sensitive   = true
+}
+
+variable "allowed_source_ips" {
+  description = "Allowed source IPs for SSH"
+  type        = list(string)
+}
+
+variable "enable_public_ip" {
+  description = "Enable public IP for bastion"
+  type        = bool
+}
+
+variable "tags" {
+  description = "Resource tags"
+  type        = map(string)
+}
+
+variable "os_disk_size_gb" {
+  description = "OS disk size in GB"
+  type        = number
+}
+
+variable "os_disk_type" {
+  description = "OS disk type"
+  type        = string
+
+  validation {
+    condition = contains([
+      "Standard_LRS",
+      "StandardSSD_LRS",
+      "Premium_LRS"
+    ], var.os_disk_type)
+    error_message = "Invalid OS disk type."
+  }
 }

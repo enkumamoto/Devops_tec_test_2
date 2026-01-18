@@ -12,7 +12,7 @@ resource "azurerm_kubernetes_cluster" "devops" {
   default_node_pool {
     name                 = var.system_node_pool_name
     vm_size              = var.node_vm_size
-    vnet_subnet_id       = var.aks_subnet_id
+    vnet_subnet_id       = data.terraform_remote_state.network.outputs.aks_subnet_id
     auto_scaling_enabled = true
     min_count            = var.min_node_count
     max_count            = var.max_node_count
@@ -31,13 +31,6 @@ resource "azurerm_kubernetes_cluster" "devops" {
 
   private_cluster_enabled           = true
   role_based_access_control_enabled = true
-
-  maintenance_window {
-    allowed {
-      day   = "Saturday"
-      hours = [2, 3, 4]
-    }
-  }
 
   tags = merge(var.tags)
 
