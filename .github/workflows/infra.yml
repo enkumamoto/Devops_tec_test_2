@@ -1,10 +1,6 @@
 name: Terraform Infrastructure
 
 on:
-  workflow_run:
-    workflows: ["Terraform Bootstrap (Backend)"]
-    types:
-      - completed
   workflow_dispatch:
     inputs:
       environment:
@@ -19,132 +15,157 @@ on:
       tf_action:
         description: "Terraform action"
         required: true
-        default: "apply"
+        default: "plan"
         type: choice
         options:
           - plan
           - apply
 
 env:
-  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
-  TF_ACTION: ${{ github.event.inputs.tf_action || 'apply' }}
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+  TF_ACTION: ${{ github.event.inputs.tf_action }}
 
 jobs:
   # =========================
-  # 0. GET BOOTSTRAP OUTPUTS
+  # 1. OBTER BACKEND DO BOOTSTRAP
   # =========================
-  get-bootstrap-data:
+  setup:
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
-
     outputs:
-      tf_rg: ${{ steps.get-outputs.outputs.TF_RG }}
-      tf_storage: ${{ steps.get-outputs.outputs.TF_STORAGE }}
-      tf_container: ${{ steps.get-outputs.outputs.TF_CONTAINER }}
+      tf_rg: ${{ steps.get-backend.outputs.tf_rg }}
+      tf_sa: ${{ steps.get-backend.outputs.tf_sa }}
+      tf_container: ${{ steps.get-backend.outputs.tf_container }}
 
     steps:
-      - name: Get Bootstrap Outputs
-        id: get-outputs
+      - name: Get Bootstrap Backend Info
+        id: get-backend
         run: |
-          # Para workflow_dispatch, use secrets
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "TF_RG=${{ secrets.TF_STATE_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
-            echo "TF_STORAGE=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
-            echo "TF_CONTAINER=${{ secrets.TF_STATE_CONTAINER }}" >> $GITHUB_OUTPUT
+          # Para o primeiro deploy, obtenha das secrets ou variáveis
+          # Depois do bootstrap, essas informações devem estar em secrets
+
+          if [ -n "${{ secrets.TF_STATE_RESOURCE_GROUP }}" ]; then
+            echo "Using secrets for backend..."
+            echo "tf_rg=${{ secrets.TF_STATE_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
+            echo "tf_sa=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
+            echo "tf_container=${{ secrets.TF_STATE_CONTAINER }}" >> $GITHUB_OUTPUT
           else
-            # Para workflow_run, você precisaria da API do GitHub para pegar os outputs reais
-            # Por enquanto, fallback para secrets
-            echo "TF_RG=${{ secrets.TF_STATE_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
-            echo "TF_STORAGE=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
-            echo "TF_CONTAINER=${{ secrets.TF_STATE_CONTAINER }}" >> $GITHUB_OUTPUT
+            # Se não houver secrets, use valores padrão baseados no ambiente
+            echo "Using default backend names..."
+            echo "tf_rg=rg-terraform-state-$ENVIRONMENT" >> $GITHUB_OUTPUT
+            echo "tf_sa=tfstate$(echo $ENVIRONMENT | cut -c1)devops" >> $GITHUB_OUTPUT
+            echo "tf_container=tfstate" >> $GITHUB_OUTPUT
           fi
 
+          echo "Backend configuration:"
+          echo "RG: ${{ steps.get-backend.outputs.tf_rg }}"
+          echo "SA: ${{ steps.get-backend.outputs.tf_sa }}"
+          echo "Container: ${{ steps.get-backend.outputs.tf_container }}"
+
   # =========================
-  # 1. NETWORK (independente)
+  # 2. NETWORK - Primeiro módulo
   # =========================
   network:
     runs-on: ubuntu-latest
-    needs: get-bootstrap-data
+    needs: setup
     environment: ${{ env.ENVIRONMENT }}
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
 
       - name: Azure Login
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
 
-      - name: Terraform Init
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+          echo "✅ Azure login successful"
+
+      - name: Terraform Init - Network
         working-directory: infraestructure/01-network
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
-            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
-            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
+            -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=network.tfstate" \
+            -input=false \
+            -reconfigure
+
+      - name: Terraform Plan - Network
+        working-directory: infraestructure/01-network
+        run: |
+          terraform plan \
+            -var="environment=$ENVIRONMENT" \
+            -var="location=eastus" \
+            -out=tfplan \
             -input=false
 
-      - name: Terraform Plan
-        working-directory: infraestructure/01-network
-        run: terraform plan -out=tfplan -input=false
-
-      - name: Terraform Apply
+      - name: Terraform Apply - Network
         if: env.TF_ACTION == 'apply'
         working-directory: infraestructure/01-network
         run: terraform apply tfplan -input=false
 
   # =========================
-  # 2. ACR (depende apenas do bootstrap)
+  # 3. ACR - Segundo módulo (depende apenas do backend)
   # =========================
   acr:
     runs-on: ubuntu-latest
-    needs: get-bootstrap-data
+    needs: setup
     environment: ${{ env.ENVIRONMENT }}
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
       - name: Azure Login
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
 
-      - name: Terraform Init
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Terraform Init - ACR
         working-directory: infraestructure/02-acr
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
-            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
-            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
+            -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=acr.tfstate" \
+            -input=false \
+            -reconfigure
+
+      - name: Terraform Plan - ACR
+        working-directory: infraestructure/02-acr
+        run: |
+          terraform plan \
+            -var="environment=$ENVIRONMENT" \
+            -var="location=eastus" \
+            -out=tfplan \
             -input=false
 
-      - name: Terraform Plan
-        working-directory: infraestructure/02-acr
-        run: terraform plan -out=tfplan -input=false
-
-      - name: Terraform Apply
+      - name: Terraform Apply - ACR
         if: env.TF_ACTION == 'apply'
         working-directory: infraestructure/02-acr
         run: terraform apply tfplan -input=false
 
   # =========================
-  # 3. AKS (depende de NETWORK e ACR)
+  # 4. AKS - Terceiro módulo (depende de network e acr)
   # =========================
   aks:
     runs-on: ubuntu-latest
@@ -152,40 +173,49 @@ jobs:
     environment: ${{ env.ENVIRONMENT }}
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
       - name: Azure Login
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
 
-      - name: Terraform Init
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Terraform Init - AKS
         working-directory: infraestructure/03-aks
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
-            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
-            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
+            -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=aks.tfstate" \
+            -input=false \
+            -reconfigure
+
+      - name: Terraform Plan - AKS
+        working-directory: infraestructure/03-aks
+        run: |
+          terraform plan \
+            -var="environment=$ENVIRONMENT" \
+            -var="location=eastus" \
+            -out=tfplan \
             -input=false
 
-      - name: Terraform Plan
-        working-directory: infraestructure/03-aks
-        run: terraform plan -out=tfplan -input=false
-
-      - name: Terraform Apply
+      - name: Terraform Apply - AKS
         if: env.TF_ACTION == 'apply'
         working-directory: infraestructure/03-aks
         run: terraform apply tfplan -input=false
 
   # =========================
-  # 4. DATABASE (depende de NETWORK)
+  # 5. DATABASE - Quarto módulo (depende de network)
   # =========================
   database:
     runs-on: ubuntu-latest
@@ -193,40 +223,49 @@ jobs:
     environment: ${{ env.ENVIRONMENT }}
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
       - name: Azure Login
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
 
-      - name: Terraform Init
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Terraform Init - Database
         working-directory: infraestructure/05-database
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
-            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
-            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
+            -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=database.tfstate" \
+            -input=false \
+            -reconfigure
+
+      - name: Terraform Plan - Database
+        working-directory: infraestructure/05-database
+        run: |
+          terraform plan \
+            -var="environment=$ENVIRONMENT" \
+            -var="location=eastus" \
+            -out=tfplan \
             -input=false
 
-      - name: Terraform Plan
-        working-directory: infraestructure/05-database
-        run: terraform plan -out=tfplan -input=false
-
-      - name: Terraform Apply
+      - name: Terraform Apply - Database
         if: env.TF_ACTION == 'apply'
         working-directory: infraestructure/05-database
         run: terraform apply tfplan -input=false
 
   # =========================
-  # 5. BASTION (depende de NETWORK)
+  # 6. BASTION - Quinto módulo (depende de network)
   # =========================
   bastion:
     runs-on: ubuntu-latest
@@ -234,40 +273,49 @@ jobs:
     environment: ${{ env.ENVIRONMENT }}
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
       - name: Azure Login
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
 
-      - name: Terraform Init
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Terraform Init - Bastion
         working-directory: infraestructure/04-bastion
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
-            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
-            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
+            -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=bastion.tfstate" \
+            -input=false \
+            -reconfigure
+
+      - name: Terraform Plan - Bastion
+        working-directory: infraestructure/04-bastion
+        run: |
+          terraform plan \
+            -var="environment=$ENVIRONMENT" \
+            -var="location=eastus" \
+            -out=tfplan \
             -input=false
 
-      - name: Terraform Plan
-        working-directory: infraestructure/04-bastion
-        run: terraform plan -out=tfplan -input=false
-
-      - name: Terraform Apply
+      - name: Terraform Apply - Bastion
         if: env.TF_ACTION == 'apply'
         working-directory: infraestructure/04-bastion
         run: terraform apply tfplan -input=false
 
   # =========================
-  # 6. VALIDATION (opcional)
+  # 7. VALIDATE & SAVE OUTPUTS
   # =========================
   validate:
     runs-on: ubuntu-latest
@@ -275,92 +323,30 @@ jobs:
     if: always()
 
     steps:
-      - name: Check Results
+      - name: Show Results
         run: |
+          echo "📊 Deployment Results:"
           echo "Network: ${{ needs.network.result }}"
           echo "ACR: ${{ needs.acr.result }}"
           echo "AKS: ${{ needs.aks.result }}"
           echo "Database: ${{ needs.database.result }}"
           echo "Bastion: ${{ needs.bastion.result }}"
 
-          if [[ "${{ needs.network.result }}" == "success" ]] && \
-             [[ "${{ needs.acr.result }}" == "success" ]] && \
-             [[ "${{ needs.aks.result }}" == "success" ]] && \
-             [[ "${{ needs.database.result }}" == "success" ]] && \
-             [[ "${{ needs.bastion.result }}" == "success" ]]; then
-            echo "✅ All infrastructure modules deployed successfully"
+          SUCCESS_COUNT=0
+          TOTAL_COUNT=0
+
+          for job in "network" "acr" "aks" "database" "bastion"; do
+            TOTAL_COUNT=$((TOTAL_COUNT + 1))
+            if [ "${{ needs[${job}].result }}" = "success" ]; then
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            fi
+          done
+
+          echo ""
+          echo "🎯 Summary: $SUCCESS_COUNT/$TOTAL_COUNT modules succeeded"
+
+          if [ $SUCCESS_COUNT -eq $TOTAL_COUNT ]; then
+            echo "✅ All infrastructure modules deployed successfully!"
           else
-            echo "❌ Some infrastructure modules failed"
-            exit 1
+            echo "⚠️  Some modules failed. Check the logs above."
           fi
-
-          # Adicione este job no final do infra.yml
-
-  save-outputs:
-    runs-on: ubuntu-latest
-    needs: [network, acr, aks, database, bastion]
-    if: success()
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-
-      - name: Get ACR Name
-        id: get-acr
-        run: |
-          # Obtém o nome do ACR criado pelo Terraform
-          ACR_NAME=$(az acr list \
-            --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} \
-            --query "[0].name" -o tsv)
-          echo "ACR_NAME=$ACR_NAME" >> $GITHUB_OUTPUT
-
-      - name: Get AKS Info
-        id: get-aks
-        run: |
-          # Obtém informações do AKS
-          AKS_RG=${{ secrets.AKS_RESOURCE_GROUP }}
-          AKS_NAME=$(az aks list \
-            --resource-group $AKS_RG \
-            --query "[0].name" -o tsv)
-          echo "AKS_NAME=$AKS_NAME" >> $GITHUB_OUTPUT
-
-          # Obtém o login server do ACR associado ao AKS
-          ACR_LOGIN_SERVER=$(az aks show \
-            --resource-group $AKS_RG \
-            --name $AKS_NAME \
-            --query "addonProfiles.acrPull.identity.objectId" -o tsv)
-          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
-
-      - name: Save Outputs to File
-        run: |
-          cat > infra-outputs.json << EOF
-          {
-            "acr_name": "${{ steps.get-acr.outputs.ACR_NAME }}",
-            "aks_name": "${{ steps.get-aks.outputs.AKS_NAME }}",
-            "aks_rg": "${{ secrets.AKS_RESOURCE_GROUP }}",
-            "acr_login_server": "${{ steps.get-aks.outputs.ACR_LOGIN_SERVER }}"
-          }
-          EOF
-
-          echo "📦 Infrastructure outputs saved:"
-          cat infra-outputs.json
-
-      - name: Upload Outputs as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: infra-outputs-${{ env.ENVIRONMENT }}
-          path: infra-outputs.json
-          retention-days: 30
-
-    outputs:
-      acr_name: ${{ steps.get-acr.outputs.ACR_NAME }}
-      aks_name: ${{ steps.get-aks.outputs.AKS_NAME }}
-      aks_rg: ${{ secrets.AKS_RESOURCE_GROUP }}
-      acr_login_server: ${{ steps.get-aks.outputs.ACR_LOGIN_SERVER }}
