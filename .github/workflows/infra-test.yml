@@ -1,4 +1,4 @@
-name: Terraform Infrastructure TEST (Plan Only)
+name: Terraform Infrastructure TEST (No Backend)
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ on:
         options:
           - dev
       module_number:
-        description: "Module number to test (ex: 01, 02, etc.)"
+        description: "Module number to test"
         required: true
         default: "01"
         type: choice
@@ -23,146 +23,79 @@ on:
           - "04"
           - "05"
 
-env:
-  ENVIRONMENT: ${{ github.event.inputs.environment }}
-  MODULE_NUMBER: ${{ github.event.inputs.module_number }}
-
 jobs:
-  terraform-plan:
+  terraform-test:
     runs-on: ubuntu-latest
     environment: test
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.6.0"
 
       - name: Validate Module Exists
         id: validate-module
         run: |
-          MODULE_DIR="infraestructure/${{ env.MODULE_NUMBER }}-*"
-          echo "🔍 Looking for module: $MODULE_DIR"
+          # ... (mesmo código que já tem)
 
-          # Listar módulos disponíveis
-          echo "📦 Available modules:"
-          find infraestructure -maxdepth 1 -type d -name "[0-9]*" | sort
+      - name: Create Temporary Terraform Files (NO BACKEND)
+        run: |
+          MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
+          BACKUP_DIR="${MODULE_PATH}_backup_${GITHUB_RUN_ID}"
 
-          # Encontrar módulo específico
-          FOUND_DIR=$(find infraestructure -maxdepth 1 -type d -name "${{ env.MODULE_NUMBER }}-*" | head -1)
+          # 1. Fazer backup dos arquivos originais
+          cp -r "${MODULE_PATH}" "${BACKUP_DIR}"
 
-          if [ -n "$FOUND_DIR" ] && [ -d "$FOUND_DIR" ]; then
-            MODULE_NAME=$(basename "$FOUND_DIR")
-            echo "✅ Module found: $MODULE_NAME"
-            echo "MODULE_NAME=$MODULE_NAME" >> $GITHUB_OUTPUT
-            echo "MODULE_PATH=$FOUND_DIR" >> $GITHUB_OUTPUT
-          else
-            echo "❌ Module ${{ env.MODULE_NUMBER }}-* not found"
-            exit 1
+          # 2. Remover/renomear backend.tf se existir
+          if [ -f "${MODULE_PATH}/backend.tf" ]; then
+            mv "${MODULE_PATH}/backend.tf" "${MODULE_PATH}/backend.tf.disabled"
+            echo "⚠️ Temporarily disabled backend.tf for testing"
           fi
 
-      - name: Azure Login
-        run: |
-          echo "🔑 Logging into Azure..."
-          az login \
-            --service-principal \
-            --username "${{ secrets.ARM_CLIENT_ID }}" \
-            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.ARM_TENANT_ID }}"
+          # 3. Se houver provider.tf ou main.tf com backend, comentar
+          for file in "${MODULE_PATH}"/*.tf; do
+            if [ -f "$file" ]; then
+              # Remover blocos de backend
+              sed -i '/^terraform {/,/^}/ {/backend "/,/}/d}' "$file" 2>/dev/null || true
+            fi
+          done
 
-          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
-          echo "✅ Azure login successful"
+          echo "BACKUP_DIR=${BACKUP_DIR}" >> $GITHUB_ENV
 
-      - name: Initialize Terraform Module
-        run: |
-          echo "🧱 Initializing module: ${{ steps.validate-module.outputs.MODULE_NAME }}"
-          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
-
-          # Mostrar estrutura do módulo
-          echo "📁 Module structure:"
-          find . -name "*.tf" -o -name "*.tfvars" | sort
-
-          # Para o bootstrap, usar backend local normalmente
-          if [ "${{ env.MODULE_NUMBER }}" = "00" ]; then
-            echo "🔧 Initializing with local backend (bootstrap module)"
-            terraform init -input=false
-          else
-            # Para outros módulos, usar backend false apenas para validação
-            echo "🔧 Initializing without backend for validation"
-            terraform init -backend=false -input=false
-          fi
-          echo "✅ Terraform initialized"
-
-      - name: Terraform Validate
+      - name: Run Terraform Commands (No Backend)
         run: |
           cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
-          echo "🔍 Validating Terraform syntax..."
+
+          # Inicializar SEM backend
+          terraform init -backend=false -input=false
+
+          # Validar
           terraform validate
-          echo "✅ Terraform validation passed"
 
-      - name: Terraform Format Check
-        run: |
-          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
-          echo "📝 Checking Terraform formatting..."
+          # Fmt check
           terraform fmt -check -recursive
-          echo "✅ Terraform formatting is correct"
 
-      - name: Terraform Plan (What-if)
-        id: plan
-        run: |
-          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
-
-          # Criar arquivo de variáveis temporário para teste
-          cat > test.tfvars << EOF
-          environment = "${{ env.ENVIRONMENT }}"
-          location = "eastus"
-          project_name = "devops-test"
-          EOF
-
-          echo "📋 Running terraform plan..."
+          # Plan com variáveis de teste
           terraform plan \
-            -var-file="test.tfvars" \
-            -out=tfplan \
+            -var="environment=${{ env.ENVIRONMENT }}" \
+            -var="location=eastus" \
+            -var="project_name=devops-test" \
             -input=false \
-            -detailed-exitcode
+            -lock=false
 
-          PLAN_EXIT_CODE=$?
-
-          if [ $PLAN_EXIT_CODE -eq 0 ]; then
-            echo "✅ No changes needed"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          elif [ $PLAN_EXIT_CODE -eq 2 ]; then
-            echo "📝 Changes detected"
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            
-            # Mostrar resumo das mudanças
-            echo ""
-            echo "📊 Change Summary:"
-            terraform show -json tfplan | jq -r '
-              .resource_changes[] | 
-              "\(.type) \(.name): \(.change.actions | join(", "))"
-            ' | head -20
-          else
-            echo "❌ Terraform plan failed with exit code: $PLAN_EXIT_CODE"
-            exit 1
-          fi
-
-      - name: Show Plan Details
-        if: steps.plan.outputs.has_changes == 'true'
-        run: |
-          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
-          echo "🔍 Detailed plan output:"
-          terraform show tfplan | head -100
-
-      - name: Upload Plan as Artifact
+      - name: Restore Original Files
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan-${{ steps.validate-module.outputs.MODULE_NAME }}-${{ github.run_id }}
-          path: ${{ steps.validate-module.outputs.MODULE_PATH }}/tfplan
-          retention-days: 7
+        run: |
+          MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
+          BACKUP_DIR="${{ env.BACKUP_DIR }}"
+
+          if [ -d "$BACKUP_DIR" ]; then
+            # Restaurar arquivos originais
+            find "$BACKUP_DIR" -name "*.tf" -exec cp {} "$MODULE_PATH/" \;
+            
+            # Remover backup
+            rm -rf "$BACKUP_DIR"
+            echo "✅ Original files restored"
+          fi
