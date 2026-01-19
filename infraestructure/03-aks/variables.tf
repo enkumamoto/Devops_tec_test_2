@@ -161,3 +161,24 @@ variable "purge_protection_enabled" {
   type        = bool
   default     = false
 }
+
+variable "enable_acr_rbac" {
+  description = "Habilitar RBAC para ACR"
+  type        = bool
+  default     = false
+}
+
+variable "acr_id" {
+  description = "ID do ACR (necessário se enable_acr_rbac = true)"
+  type        = string
+  default     = ""
+}
+
+# Em rbac_acr.tf, modificar:
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  count = var.enable_acr_rbac && var.acr_id != "" ? 1 : 0
+
+  scope                = var.acr_id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_kubernetes_cluster.devops.kubelet_identity[0].object_id
+}
