@@ -1,0 +1,366 @@
+name: Terraform Infrastructure
+
+on:
+  workflow_run:
+    workflows: ["Terraform Bootstrap (Backend)"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment name"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      tf_action:
+        description: "Terraform action"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - plan
+          - apply
+
+env:
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+  TF_ACTION: ${{ github.event.inputs.tf_action || 'apply' }}
+
+jobs:
+  # =========================
+  # 0. GET BOOTSTRAP OUTPUTS
+  # =========================
+  get-bootstrap-data:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+
+    outputs:
+      tf_rg: ${{ steps.get-outputs.outputs.TF_RG }}
+      tf_storage: ${{ steps.get-outputs.outputs.TF_STORAGE }}
+      tf_container: ${{ steps.get-outputs.outputs.TF_CONTAINER }}
+
+    steps:
+      - name: Get Bootstrap Outputs
+        id: get-outputs
+        run: |
+          # Para workflow_dispatch, use secrets
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "TF_RG=${{ secrets.TF_STATE_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
+            echo "TF_STORAGE=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
+            echo "TF_CONTAINER=${{ secrets.TF_STATE_CONTAINER }}" >> $GITHUB_OUTPUT
+          else
+            # Para workflow_run, você precisaria da API do GitHub para pegar os outputs reais
+            # Por enquanto, fallback para secrets
+            echo "TF_RG=${{ secrets.TF_STATE_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
+            echo "TF_STORAGE=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
+            echo "TF_CONTAINER=${{ secrets.TF_STATE_CONTAINER }}" >> $GITHUB_OUTPUT
+          fi
+
+  # =========================
+  # 1. NETWORK (independente)
+  # =========================
+  network:
+    runs-on: ubuntu-latest
+    needs: get-bootstrap-data
+    environment: ${{ env.ENVIRONMENT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: infraestructure/01-network
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
+            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="key=network.tfstate" \
+            -input=false
+
+      - name: Terraform Plan
+        working-directory: infraestructure/01-network
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Terraform Apply
+        if: env.TF_ACTION == 'apply'
+        working-directory: infraestructure/01-network
+        run: terraform apply tfplan -input=false
+
+  # =========================
+  # 2. ACR (depende apenas do bootstrap)
+  # =========================
+  acr:
+    runs-on: ubuntu-latest
+    needs: get-bootstrap-data
+    environment: ${{ env.ENVIRONMENT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: infraestructure/02-acr
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
+            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="key=acr.tfstate" \
+            -input=false
+
+      - name: Terraform Plan
+        working-directory: infraestructure/02-acr
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Terraform Apply
+        if: env.TF_ACTION == 'apply'
+        working-directory: infraestructure/02-acr
+        run: terraform apply tfplan -input=false
+
+  # =========================
+  # 3. AKS (depende de NETWORK e ACR)
+  # =========================
+  aks:
+    runs-on: ubuntu-latest
+    needs: [network, acr]
+    environment: ${{ env.ENVIRONMENT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: infraestructure/03-aks
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
+            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="key=aks.tfstate" \
+            -input=false
+
+      - name: Terraform Plan
+        working-directory: infraestructure/03-aks
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Terraform Apply
+        if: env.TF_ACTION == 'apply'
+        working-directory: infraestructure/03-aks
+        run: terraform apply tfplan -input=false
+
+  # =========================
+  # 4. DATABASE (depende de NETWORK)
+  # =========================
+  database:
+    runs-on: ubuntu-latest
+    needs: network
+    environment: ${{ env.ENVIRONMENT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: infraestructure/05-database
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
+            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="key=database.tfstate" \
+            -input=false
+
+      - name: Terraform Plan
+        working-directory: infraestructure/05-database
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Terraform Apply
+        if: env.TF_ACTION == 'apply'
+        working-directory: infraestructure/05-database
+        run: terraform apply tfplan -input=false
+
+  # =========================
+  # 5. BASTION (depende de NETWORK)
+  # =========================
+  bastion:
+    runs-on: ubuntu-latest
+    needs: network
+    environment: ${{ env.ENVIRONMENT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: infraestructure/04-bastion
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ needs.get-bootstrap-data.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.get-bootstrap-data.outputs.tf_storage }}" \
+            -backend-config="container_name=${{ needs.get-bootstrap-data.outputs.tf_container }}" \
+            -backend-config="key=bastion.tfstate" \
+            -input=false
+
+      - name: Terraform Plan
+        working-directory: infraestructure/04-bastion
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Terraform Apply
+        if: env.TF_ACTION == 'apply'
+        working-directory: infraestructure/04-bastion
+        run: terraform apply tfplan -input=false
+
+  # =========================
+  # 6. VALIDATION (opcional)
+  # =========================
+  validate:
+    runs-on: ubuntu-latest
+    needs: [network, acr, aks, database, bastion]
+    if: always()
+
+    steps:
+      - name: Check Results
+        run: |
+          echo "Network: ${{ needs.network.result }}"
+          echo "ACR: ${{ needs.acr.result }}"
+          echo "AKS: ${{ needs.aks.result }}"
+          echo "Database: ${{ needs.database.result }}"
+          echo "Bastion: ${{ needs.bastion.result }}"
+
+          if [[ "${{ needs.network.result }}" == "success" ]] && \
+             [[ "${{ needs.acr.result }}" == "success" ]] && \
+             [[ "${{ needs.aks.result }}" == "success" ]] && \
+             [[ "${{ needs.database.result }}" == "success" ]] && \
+             [[ "${{ needs.bastion.result }}" == "success" ]]; then
+            echo "✅ All infrastructure modules deployed successfully"
+          else
+            echo "❌ Some infrastructure modules failed"
+            exit 1
+          fi
+
+          # Adicione este job no final do infra.yml
+
+  save-outputs:
+    runs-on: ubuntu-latest
+    needs: [network, acr, aks, database, bastion]
+    if: success()
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Get ACR Name
+        id: get-acr
+        run: |
+          # Obtém o nome do ACR criado pelo Terraform
+          ACR_NAME=$(az acr list \
+            --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} \
+            --query "[0].name" -o tsv)
+          echo "ACR_NAME=$ACR_NAME" >> $GITHUB_OUTPUT
+
+      - name: Get AKS Info
+        id: get-aks
+        run: |
+          # Obtém informações do AKS
+          AKS_RG=${{ secrets.AKS_RESOURCE_GROUP }}
+          AKS_NAME=$(az aks list \
+            --resource-group $AKS_RG \
+            --query "[0].name" -o tsv)
+          echo "AKS_NAME=$AKS_NAME" >> $GITHUB_OUTPUT
+
+          # Obtém o login server do ACR associado ao AKS
+          ACR_LOGIN_SERVER=$(az aks show \
+            --resource-group $AKS_RG \
+            --name $AKS_NAME \
+            --query "addonProfiles.acrPull.identity.objectId" -o tsv)
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+
+      - name: Save Outputs to File
+        run: |
+          cat > infra-outputs.json << EOF
+          {
+            "acr_name": "${{ steps.get-acr.outputs.ACR_NAME }}",
+            "aks_name": "${{ steps.get-aks.outputs.AKS_NAME }}",
+            "aks_rg": "${{ secrets.AKS_RESOURCE_GROUP }}",
+            "acr_login_server": "${{ steps.get-aks.outputs.ACR_LOGIN_SERVER }}"
+          }
+          EOF
+
+          echo "📦 Infrastructure outputs saved:"
+          cat infra-outputs.json
+
+      - name: Upload Outputs as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: infra-outputs-${{ env.ENVIRONMENT }}
+          path: infra-outputs.json
+          retention-days: 30
+
+    outputs:
+      acr_name: ${{ steps.get-acr.outputs.ACR_NAME }}
+      aks_name: ${{ steps.get-aks.outputs.AKS_NAME }}
+      aks_rg: ${{ secrets.AKS_RESOURCE_GROUP }}
+      acr_login_server: ${{ steps.get-aks.outputs.ACR_LOGIN_SERVER }}
