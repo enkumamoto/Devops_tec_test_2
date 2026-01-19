@@ -15,7 +15,7 @@ on:
         type: string
 
 env:
-  REGISTRY: ${{ secrets.ACR_NAME }}.azurecr.io
+  REGISTRY: ${{ needs.get-infra-outputs.outputs.acr_login_server || 'placeholder.azurecr.io' }}
   IMAGE_NAME: fastapi-devops
   K8S_NAMESPACE: devops-app
 
@@ -71,13 +71,62 @@ jobs:
           DB_SSLMODE: disable
         run: |
           python -m pytest -v
+  get-infra-outputs:
+    runs-on: ubuntu-latest
+    needs: validate
+    outputs:
+      acr_name: ${{ steps.download.outputs.ACR_NAME }}
+      aks_name: ${{ steps.download.outputs.AKS_NAME }}
+      aks_rg: ${{ steps.download.outputs.AKS_RG }}
+      acr_login_server: ${{ steps.download.outputs.ACR_LOGIN_SERVER }}
+
+    steps:
+      - name: Download Infrastructure Outputs
+        id: download
+        uses: actions/download-artifact@v4
+        with:
+          name: infra-outputs-${{ github.ref_name }}
+          path: ./
+
+      - name: Parse Outputs
+        id: parse
+        run: |
+          # Se não encontrar artifact, busca via Azure CLI
+          if [ -f infra-outputs.json ]; then
+            ACR_NAME=$(jq -r '.acr_name' infra-outputs.json)
+            AKS_NAME=$(jq -r '.aks_name' infra-outputs.json)
+            AKS_RG=$(jq -r '.aks_rg' infra-outputs.json)
+            ACR_LOGIN_SERVER=$(jq -r '.acr_login_server' infra-outputs.json)
+          else
+            # Fallback: busca diretamente no Azure
+            echo "📡 Fetching from Azure directly..."
+            az login --service-principal \
+              --username ${{ secrets.ARM_CLIENT_ID }} \
+              --password ${{ secrets.ARM_CLIENT_SECRET }} \
+              --tenant ${{ secrets.ARM_TENANT_ID }}
+            
+            AKS_RG="${{ secrets.AKS_RESOURCE_GROUP }}"
+            AKS_NAME=$(az aks list --resource-group $AKS_RG --query "[0].name" -o tsv)
+            ACR_NAME=$(az acr list --resource-group $AKS_RG --query "[0].name" -o tsv)
+            ACR_LOGIN_SERVER="$ACR_NAME.azurecr.io"
+          fi
+
+          echo "ACR_NAME=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "AKS_NAME=$AKS_NAME" >> $GITHUB_OUTPUT
+          echo "AKS_RG=$AKS_RG" >> $GITHUB_OUTPUT
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+
+          echo "✅ Retrieved:"
+          echo "ACR: $ACR_NAME"
+          echo "AKS: $AKS_NAME"
+          echo "RG: $AKS_RG"
 
   # =========================
   # 2. BUILD & PUSH
   # =========================
   build:
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, get-infra-outputs]
     permissions:
       contents: read
       packages: write

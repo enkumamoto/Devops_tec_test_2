@@ -293,3 +293,74 @@ jobs:
             echo "❌ Some infrastructure modules failed"
             exit 1
           fi
+
+          # Adicione este job no final do infra.yml
+
+  save-outputs:
+    runs-on: ubuntu-latest
+    needs: [network, acr, aks, database, bastion]
+    if: success()
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Get ACR Name
+        id: get-acr
+        run: |
+          # Obtém o nome do ACR criado pelo Terraform
+          ACR_NAME=$(az acr list \
+            --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} \
+            --query "[0].name" -o tsv)
+          echo "ACR_NAME=$ACR_NAME" >> $GITHUB_OUTPUT
+
+      - name: Get AKS Info
+        id: get-aks
+        run: |
+          # Obtém informações do AKS
+          AKS_RG=${{ secrets.AKS_RESOURCE_GROUP }}
+          AKS_NAME=$(az aks list \
+            --resource-group $AKS_RG \
+            --query "[0].name" -o tsv)
+          echo "AKS_NAME=$AKS_NAME" >> $GITHUB_OUTPUT
+
+          # Obtém o login server do ACR associado ao AKS
+          ACR_LOGIN_SERVER=$(az aks show \
+            --resource-group $AKS_RG \
+            --name $AKS_NAME \
+            --query "addonProfiles.acrPull.identity.objectId" -o tsv)
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+
+      - name: Save Outputs to File
+        run: |
+          cat > infra-outputs.json << EOF
+          {
+            "acr_name": "${{ steps.get-acr.outputs.ACR_NAME }}",
+            "aks_name": "${{ steps.get-aks.outputs.AKS_NAME }}",
+            "aks_rg": "${{ secrets.AKS_RESOURCE_GROUP }}",
+            "acr_login_server": "${{ steps.get-aks.outputs.ACR_LOGIN_SERVER }}"
+          }
+          EOF
+
+          echo "📦 Infrastructure outputs saved:"
+          cat infra-outputs.json
+
+      - name: Upload Outputs as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: infra-outputs-${{ env.ENVIRONMENT }}
+          path: infra-outputs.json
+          retention-days: 30
+
+    outputs:
+      acr_name: ${{ steps.get-acr.outputs.ACR_NAME }}
+      aks_name: ${{ steps.get-aks.outputs.AKS_NAME }}
+      aks_rg: ${{ secrets.AKS_RESOURCE_GROUP }}
+      acr_login_server: ${{ steps.get-aks.outputs.ACR_LOGIN_SERVER }}

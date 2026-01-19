@@ -1,0 +1,80 @@
+name: Terraform Infrastructure TEST (Plan Only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment name"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+      module:
+        description: "Module to test"
+        required: false
+        default: "network"
+        type: choice
+        options:
+          - network
+          - acr
+          - aks
+          - database
+          - bastion
+
+jobs:
+  terraform-plan:
+    runs-on: ubuntu-latest
+    environment: test
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Azure Login
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
+
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Initialize Terraform Module
+        run: |
+          MODULE_DIR="infraestructure/${{ github.event.inputs.module }}"
+
+          if [ ! -d "$MODULE_DIR" ]; then
+            echo "❌ Module directory not found: $MODULE_DIR"
+            exit 1
+          fi
+
+          echo "🧱 Testing module: ${{ github.event.inputs.module }}"
+
+          # Usar backend local para teste
+          cd "$MODULE_DIR"
+          terraform init -backend=false
+
+      - name: Terraform Validate
+        run: |
+          cd "infraestructure/${{ github.event.inputs.module }}"
+          terraform validate
+
+      - name: Terraform Plan (What-if)
+        run: |
+          cd "infraestructure/${{ github.event.inputs.module }}"
+          terraform plan \
+            -var="environment=${{ github.event.inputs.environment }}" \
+            -var="location=eastus" \
+            -out=tfplan \
+            -input=false
+
+          echo "✅ Plan generated successfully"
+          echo "📋 Resources that would be created:"
+          terraform show -json tfplan | jq '.planned_values.root_module.resources[].address' || true
