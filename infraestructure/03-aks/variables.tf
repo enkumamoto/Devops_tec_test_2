@@ -87,3 +87,29 @@ variable "maintenance_hours" {
   description = "Allowed hours for AKS maintenance"
   type        = list(number)
 }
+
+
+variable "azure_subscription_id" {
+  description = "Azure Subscription ID"
+  type        = string
+  default     = ""
+}
+
+variable "azure_client_id" {
+  description = "Azure Service Principal Client ID"
+  type        = string
+  default     = ""
+}
+
+variable "azure_client_secret" {
+  description = "Azure Service Principal Client Secret"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "azure_tenant_id" {
+  description = "Azure Tenant ID"
+  type        = string
+  default     = ""
+}

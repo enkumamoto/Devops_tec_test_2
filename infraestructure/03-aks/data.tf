@@ -1,23 +1,23 @@
-data "azurerm_client_config" "current" {}
+# data "azurerm_client_config" "current" {}
 
-data "terraform_remote_state" "network" {
-  backend = "azurerm"
+# data "terraform_remote_state" "network" {
+#   backend = "azurerm"
 
-  config = {
-    resource_group_name  = "__TF_BACKEND_RESOURCE_GROUP__"
-    storage_account_name = "__TF_BACKEND_STORAGE_ACCOUNT__"
-    container_name       = "__TF_BACKEND_CONTAINER__"
-    key                  = "network.tfstate"
-  }
-}
+#   config = {
+#     resource_group_name  = "__TF_BACKEND_RESOURCE_GROUP__"
+#     storage_account_name = "__TF_BACKEND_STORAGE_ACCOUNT__"
+#     container_name       = "__TF_BACKEND_CONTAINER__"
+#     key                  = "network.tfstate"
+#   }
+# }
 
-data "terraform_remote_state" "acr" {
-  backend = "azurerm"
+# data "terraform_remote_state" "acr" {
+#   backend = "azurerm"
 
-  config = {
-    resource_group_name  = "__TF_BACKEND_RESOURCE_GROUP__"
-    storage_account_name = "__TF_BACKEND_STORAGE_ACCOUNT__"
-    container_name       = "__TF_BACKEND_CONTAINER__"
-    key                  = "acr.tfstate"
-  }
-}
+#   config = {
+#     resource_group_name  = "__TF_BACKEND_RESOURCE_GROUP__"
+#     storage_account_name = "__TF_BACKEND_STORAGE_ACCOUNT__"
+#     container_name       = "__TF_BACKEND_CONTAINER__"
+#     key                  = "acr.tfstate"
+#   }
+# }
