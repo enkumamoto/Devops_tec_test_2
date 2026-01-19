@@ -1,6 +1,6 @@
 resource "azurerm_storage_account" "devops" {
   # Nome deve ser único globalmente, max 24 chars, somente lowercase
-  name                     = "${azurerm_resource_group.devops.name}devops"
+  name                     = "tfstatedevdevops"
   resource_group_name      = azurerm_resource_group.devops.name
   location                 = azurerm_resource_group.devops.location
   account_tier             = "Standard"
@@ -10,7 +10,7 @@ resource "azurerm_storage_account" "devops" {
   # Segurança
   https_traffic_only_enabled      = true
   min_tls_version                 = "TLS1_2"
-  allow_nested_items_to_be_public = false # ← CORRIGIDO AQUI
+  allow_nested_items_to_be_public = false
   public_network_access_enabled   = false
 
   # Blob properties
@@ -43,7 +43,7 @@ resource "azurerm_storage_account" "devops" {
 
 resource "azurerm_storage_container" "devops" {
   name                  = var.storage_container_name
-  storage_account_name  = azurerm_storage_account.devops.name # ← CORRETO
+  storage_account_name  = azurerm_storage_account.devops.name
   container_access_type = "private"
 
   metadata = {
