@@ -12,7 +12,6 @@ on:
         description: "Environment name"
         required: true
         default: "dev"
-        type: string
         type: choice
         options:
           - dev
@@ -20,9 +19,9 @@ on:
           - prod
 
 env:
-  LOCATION: ${{ github.event.inputs.location || 'eastus' }}
-  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
-  RESOURCE_GROUP_NAME: "rg-terraform-state-${{ env.ENVIRONMENT }}"
+  LOCATION: ${{ github.event.inputs.location }}
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+  RESOURCE_GROUP_NAME: "rg-terraform-state-${{ github.event.inputs.environment }}"
 
 jobs:
   bootstrap:
@@ -44,109 +43,191 @@ jobs:
 
       - name: Validate Environment Input
         run: |
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
           VALID_ENVS=("dev" "staging" "prod")
-          if [[ ! " ${VALID_ENVS[@]} " =~ " $ENVIRONMENT " ]]; then
-            echo "❌ Invalid environment: $ENVIRONMENT. Must be one of: ${VALID_ENVS[*]}"
+
+          if [[ ! " ${VALID_ENVS[@]} " =~ " ${ENVIRONMENT} " ]]; then
+            echo "❌ Invalid environment: ${ENVIRONMENT}. Must be one of: ${VALID_ENVS[*]}"
             exit 1
           fi
+          echo "✅ Environment validated: ${ENVIRONMENT}"
 
-      - name: Create Terraform Backend Resources
-        id: create-backend
+      - name: Generate Storage Account Name
+        id: generate-name
         run: |
-          # 1. Resource Group (idempotent)
-          az group create \
-            --name "$RESOURCE_GROUP_NAME" \
-            --location "$LOCATION" \
-            --tags "Environment=$ENVIRONMENT" "ManagedBy=GitHubActions" "CreatedBy=Bootstrap" \
-            --output none
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
 
-          # 2. Generate deterministic storage account name (Azure naming rules)
-          #    - Max 24 chars, lowercase, no hyphens
-          #    - Pattern: tfstate<env><short-sha><suffix>
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          TIMESTAMP=$(date +%m%d)
-          STORAGE_BASE="tfstate${ENVIRONMENT}${SHORT_SHA}${TIMESTAMP}"
+          # Para workflow_dispatch, usamos timestamp em vez de git sha
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          RANDOM_SUFFIX=$(openssl rand -hex 3)
+
+          # Padrão: tfstate + env + timestamp + random
+          STORAGE_BASE="tfstate${ENVIRONMENT}${TIMESTAMP}${RANDOM_SUFFIX}"
+
+          # Limitar para 24 chars, somente lowercase alfanumérico
           STORAGE_NAME=$(echo "$STORAGE_BASE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g' | cut -c1-24)
 
-          echo "📦 Storage Account Name: $STORAGE_NAME"
+          echo "📦 Generated Storage Account Name: $STORAGE_NAME"
+          echo "storage_account_name=$STORAGE_NAME" >> $GITHUB_OUTPUT
+          echo "resource_group_name=rg-terraform-state-$ENVIRONMENT" >> $GITHUB_OUTPUT
 
-          # 3. Create Storage Account (if not exists)
-          EXISTING_SA=$(az storage account list \
-            --resource-group "$RESOURCE_GROUP_NAME" \
-            --query "[?name=='$STORAGE_NAME'].name" \
+      - name: Create Resource Group
+        id: create-rg
+        run: |
+          LOCATION="${{ github.event.inputs.location }}"
+          RG_NAME="rg-terraform-state-${{ github.event.inputs.environment }}"
+
+          echo "🏗️ Creating Resource Group: $RG_NAME in $LOCATION"
+
+          # Criar ou atualizar resource group (idempotente)
+          az group create \
+            --name "$RG_NAME" \
+            --location "$LOCATION" \
+            --tags "Environment=${{ github.event.inputs.environment }}" \
+                    "ManagedBy=GitHubActions" \
+                    "Purpose=TerraformState" \
+                    "Created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --output none
+            
+          echo "✅ Resource Group created/updated"
+          echo "rg_created=true" >> $GITHUB_OUTPUT
+
+      - name: Create Storage Account
+        id: create-sa
+        run: |
+          RG_NAME="rg-terraform-state-${{ github.event.inputs.environment }}"
+          SA_NAME="${{ steps.generate-name.outputs.storage_account_name }}"
+          LOCATION="${{ github.event.inputs.location }}"
+
+          echo "💾 Creating Storage Account: $SA_NAME"
+
+          # Verificar se já existe
+          EXISTING=$(az storage account list \
+            --resource-group "$RG_NAME" \
+            --query "[?name=='$SA_NAME'].name" \
             --output tsv)
 
-          if [ -z "$EXISTING_SA" ]; then
+          if [ -z "$EXISTING" ]; then
             az storage account create \
-              --name "$STORAGE_NAME" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
+              --name "$SA_NAME" \
+              --resource-group "$RG_NAME" \
               --location "$LOCATION" \
               --sku Standard_LRS \
               --kind StorageV2 \
               --https-only true \
               --allow-blob-public-access false \
-              --min-tls-version TLS1_2 \
-              --tags "Environment=$ENVIRONMENT" "ManagedBy=GitHubActions" \
+              --min-tls-version "TLS1_2" \
+              --tags "Environment=${{ github.event.inputs.environment }}" \
+                      "ManagedBy=GitHubActions" \
+                      "Purpose=TerraformState" \
               --output none
-            echo "✅ Storage Account created: $STORAGE_NAME"
+              
+            echo "✅ Storage Account created"
           else
-            echo "📌 Storage Account already exists: $STORAGE_NAME"
+            echo "📌 Storage Account already exists"
           fi
 
-          # 4. Create Container (idempotent)
+          echo "sa_created=true" >> $GITHUB_OUTPUT
+
+      - name: Configure Storage Account
+        run: |
+          RG_NAME="rg-terraform-state-${{ github.event.inputs.environment }}"
+          SA_NAME="${{ steps.generate-name.outputs.storage_account_name }}"
+
+          echo "⚙️ Configuring Storage Account..."
+
+          # 1. Criar container para tfstate
           az storage container create \
             --name "tfstate" \
-            --account-name "$STORAGE_NAME" \
+            --account-name "$SA_NAME" \
             --auth-mode login \
+            --public-access off \
             --fail-on-exist false \
             --output none
 
-          # 5. Enable blob versioning (idempotent)
+          echo "✅ Container 'tfstate' created/verified"
+
+          # 2. Habilitar versioning
           az storage account blob-service-properties update \
-            --account-name "$STORAGE_NAME" \
-            --resource-group "$RESOURCE_GROUP_NAME" \
+            --account-name "$SA_NAME" \
+            --resource-group "$RG_NAME" \
             --enable-versioning true \
             --output none
 
-          # 6. Set network rules (idempotent)
-          az storage account network-rule update \
-            --account-name "$STORAGE_NAME" \
-            --resource-group "$RESOURCE_GROUP_NAME" \
+          echo "✅ Blob versioning enabled"
+
+          # 3. Configurar network rules (deny public access)
+          az storage account update \
+            --name "$SA_NAME" \
+            --resource-group "$RG_NAME" \
             --default-action Deny \
             --bypass AzureServices \
             --output none
 
-          # 7. Outputs for next workflows
-          echo "TF_STORAGE_ACCOUNT=$STORAGE_NAME" >> $GITHUB_OUTPUT
-          echo "TF_RESOURCE_GROUP=$RESOURCE_GROUP_NAME" >> $GITHUB_OUTPUT
-          echo "TF_CONTAINER_NAME=tfstate" >> $GITHUB_OUTPUT
-          echo "TF_LOCATION=$LOCATION" >> $GITHUB_OUTPUT
-          echo "TF_ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "✅ Network rules configured"
 
-      - name: Generate Backend Config File
+      - name: Generate Terraform Backend Configuration
         run: |
-          cat > backend-config.txt << EOF
-          # Terraform Backend Configuration
-          # Generated by Bootstrap Pipeline
-          storage_account_name = "${{ steps.create-backend.outputs.TF_STORAGE_ACCOUNT }}"
+          ENV="${{ github.event.inputs.environment }}"
+          SA_NAME="${{ steps.generate-name.outputs.storage_account_name }}"
+          RG_NAME="rg-terraform-state-$ENV"
+
+          # Criar arquivo de configuração
+          cat > backend-config.hcl << EOF
+          # Terraform Backend Configuration for $ENV environment
+          # Auto-generated by Bootstrap Pipeline
+
+          storage_account_name = "$SA_NAME"
           container_name       = "tfstate"
-          resource_group_name  = "${{ steps.create-backend.outputs.TF_RESOURCE_GROUP }}"
-          # Note: 'key' is defined per module (network.tfstate, aks.tfstate, etc.)
+          resource_group_name  = "$RG_NAME"
+
+          # Module-specific state files
+          # network.tfstate, aks.tfstate, database.tfstate, etc.
           EOF
 
-          echo "🔐 Backend config generated:"
-          cat backend-config.txt
+          # Criar também um arquivo JSON para fácil parsing
+          cat > backend-config.json << EOF
+          {
+            "storage_account_name": "$SA_NAME",
+            "container_name": "tfstate",
+            "resource_group_name": "$RG_NAME",
+            "environment": "$ENV",
+            "location": "${{ github.event.inputs.location }}",
+            "generated_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          }
+          EOF
 
-      - name: Upload Backend Config as Artifact
+          echo "🔐 Backend configuration generated:"
+          echo "========================================"
+          cat backend-config.hcl
+          echo ""
+          echo "📊 JSON version saved for automation"
+
+      - name: Upload Backend Configuration
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-backend-${{ env.ENVIRONMENT }}
-          path: backend-config.txt
-          retention-days: 7
+          name: terraform-backend-${{ github.event.inputs.environment }}
+          path: |
+            backend-config.hcl
+            backend-config.json
+          retention-days: 30
+
+      - name: Save Outputs to GitHub Environment Variables
+        if: success()
+        run: |
+          # Criar arquivo para setar variáveis de ambiente em workflows subsequentes
+          ENV_FILE="$GITHUB_ENV"
+
+          echo "TF_STATE_SA=${{ steps.generate-name.outputs.storage_account_name }}" >> $ENV_FILE
+          echo "TF_STATE_RG=rg-terraform-state-${{ github.event.inputs.environment }}" >> $ENV_FILE
+          echo "TF_STATE_CONTAINER=tfstate" >> $ENV_FILE
+          echo "TF_ENVIRONMENT=${{ github.event.inputs.environment }}" >> $ENV_FILE
+          echo "TF_LOCATION=${{ github.event.inputs.location }}" >> $ENV_FILE
+
+          echo "✅ Environment variables set for subsequent steps"
 
     outputs:
-      storage_account_name: ${{ steps.create-backend.outputs.TF_STORAGE_ACCOUNT }}
-      resource_group_name: ${{ steps.create-backend.outputs.TF_RESOURCE_GROUP }}
-      container_name: ${{ steps.create-backend.outputs.TF_CONTAINER_NAME }}
-      location: ${{ steps.create-backend.outputs.TF_LOCATION }}
-      environment: ${{ steps.create-backend.outputs.TF_ENVIRONMENT }}
+      storage_account_name: ${{ steps.generate-name.outputs.storage_account_name }}
+      resource_group_name: rg-terraform-state-${{ github.event.inputs.environment }}
+      environment: ${{ github.event.inputs.environment }}
+      location: ${{ github.event.inputs.location }}
