@@ -74,21 +74,6 @@ variable "max_node_count" {
   type        = number
 }
 
-# ============================
-# Maintenance Window
-# ============================
-
-variable "maintenance_day" {
-  description = "Allowed day for AKS maintenance"
-  type        = string
-}
-
-variable "maintenance_hours" {
-  description = "Allowed hours for AKS maintenance"
-  type        = list(number)
-}
-
-
 variable "azure_subscription_id" {
   description = "Azure Subscription ID"
   type        = string
