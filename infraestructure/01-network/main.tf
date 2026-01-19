@@ -18,10 +18,6 @@ resource "azurerm_resource_group" "network" {
   }
 }
 
-data "azurerm_client_config" "current" {}
-
-data "azurerm_subscription" "current" {}
-
 locals {
   naming_prefix = "${var.environment}-devops"
 
@@ -45,13 +41,3 @@ locals {
   timestamp = formatdate("YYYY-MM-DD-hhmmss", timestamp())
 }
 
-output "local_values" {
-  description = "Local values computed for this module"
-  value = {
-    naming_prefix   = local.naming_prefix
-    vnet_name       = local.vnet_name
-    subnet_names    = local.subnet_names
-    deployment_time = local.timestamp
-  }
-  sensitive = false
-}
