@@ -86,92 +86,92 @@ jobs:
           MODULE_NUM="${{ steps.find-module.outputs.MODULE_NUMBER }}"
 
           if [ "$MODULE_NUM" = "01" ]; then
-            cat > test.auto.tfvars << EOF
-            resource_group_name = "rg-network-dev"
-            vnet_name = "vnet-dev"
-            vnet_address_space = ["10.0.0.0/16"]
-            aks_subnet_address_prefixes = ["10.0.1.0/24"]
-            database_subnet_address_prefixes = ["10.0.2.0/24"]
-            bastion_subnet_address_prefixes = ["10.0.3.0/24"]
-            location = "eastus"
-            environment = "dev"
-            azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
-            azure_client_id = "$ARM_CLIENT_ID"
-            azure_client_secret = "$ARM_CLIENT_SECRET"
-            azure_tenant_id = "$ARM_TENANT_ID"
-            tags = {
-              Environment = "dev"
-              Project = "devops-test"
-            }
-            EOF
-            echo "Created variables for 01-network"
-            
-          elif [ "$MODULE_NUM" = "02" ]; then
-            cat > test.auto.tfvars << EOF
-            resource_group_name = "rg-acr-dev"
-            location = "eastus"
-            acr_sku = "Standard"
-            admin_enabled = false
-            project = "devops"
-            environment = "dev"
-            azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
-            azure_client_id = "$ARM_CLIENT_ID"
-            azure_client_secret = "$ARM_CLIENT_SECRET"
-            azure_tenant_id = "$ARM_TENANT_ID"
-            tags = {
-              Environment = "dev"
-              Project = "devops-test"
-            }
-            EOF
-            echo "Created variables for 02-acr"
-            
-          elif [ "$MODULE_NUM" = "03" ]; then
-            cat > test.auto.tfvars << EOF
-            resource_group_name = "rg-aks-dev"
-            location = "eastus"
-            environment = "dev"
-            azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
-            azure_client_id = "$ARM_CLIENT_ID"
-            azure_client_secret = "$ARM_CLIENT_SECRET"
-            azure_tenant_id = "$ARM_TENANT_ID"
-            tags = {
-              Environment = "dev"
-              Project = "devops-test"
-            }
-            EOF
-            echo "Created variables for 03-aks (ajuste conforme suas variáveis)"
-            
-          elif [ "$MODULE_NUM" = "04" ]; then
-            cat > test.auto.tfvars << EOF
-            resource_group_name = "rg-bastion-dev"
-            location = "eastus"
-            environment = "dev"
-            azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
-            azure_client_id = "$ARM_CLIENT_ID"
-            azure_client_secret = "$ARM_CLIENT_SECRET"
-            azure_tenant_id = "$ARM_TENANT_ID"
-            tags = {
-              Environment = "dev"
-              Project = "devops-test"
-            }
-            EOF
-            echo "Created variables for 04-bastion (ajuste conforme suas variáveis)"
-            
-          elif [ "$MODULE_NUM" = "05" ]; then
-            cat > test.auto.tfvars << EOF
-            resource_group_name = "rg-database-dev"
-            location = "eastus"
-            environment = "dev"
-            azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
-            azure_client_id = "$ARM_CLIENT_ID"
-            azure_client_secret = "$ARM_CLIENT_SECRET"
-            azure_tenant_id = "$ARM_TENANT_ID"
-            tags = {
-              Environment = "dev"
-              Project = "devops-test"
-            }
-            EOF
-            echo "Created variables for 05-database (ajuste conforme suas variáveis)"
+            cat > test.auto.tfvars << 'EOF'
+              resource_group_name = "rg-network-dev"
+          vnet_name = "vnet-dev"
+          vnet_address_space = ["10.0.0.0/16"]
+          aks_subnet_address_prefixes = ["10.0.1.0/24"]
+          database_subnet_address_prefixes = ["10.0.2.0/24"]
+          bastion_subnet_address_prefixes = ["10.0.3.0/24"]
+          location = "eastus"
+          environment = "dev"
+          azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
+          azure_client_id = "$ARM_CLIENT_ID"
+          azure_client_secret = "$ARM_CLIENT_SECRET"
+          azure_tenant_id = "$ARM_TENANT_ID"
+          tags = {
+            Environment = "dev"
+            Project = "devops-test"
+          }
+          EOF
+                echo "Created variables for 01-network"
+                
+              elif [ "$MODULE_NUM" = "02" ]; then
+                cat > test.auto.tfvars << 'EOF'
+          resource_group_name = "rg-acr-dev"
+          location = "eastus"
+          acr_sku = "Standard"
+          admin_enabled = false
+          project = "devops"
+          environment = "dev"
+          azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
+          azure_client_id = "$ARM_CLIENT_ID"
+          azure_client_secret = "$ARM_CLIENT_SECRET"
+          azure_tenant_id = "$ARM_TENANT_ID"
+          tags = {
+            Environment = "dev"
+            Project = "devops-test"
+          }
+          EOF
+                echo "Created variables for 02-acr"
+                
+              elif [ "$MODULE_NUM" = "03" ]; then
+                cat > test.auto.tfvars << 'EOF'
+          resource_group_name = "rg-aks-dev"
+          location = "eastus"
+          environment = "dev"
+          azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
+          azure_client_id = "$ARM_CLIENT_ID"
+          azure_client_secret = "$ARM_CLIENT_SECRET"
+          azure_tenant_id = "$ARM_TENANT_ID"
+          tags = {
+            Environment = "dev"
+            Project = "devops-test"
+          }
+          EOF
+                echo "Created variables for 03-aks"
+                
+              elif [ "$MODULE_NUM" = "04" ]; then
+                cat > test.auto.tfvars << 'EOF'
+          resource_group_name = "rg-bastion-dev"
+          location = "eastus"
+          environment = "dev"
+          azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
+          azure_client_id = "$ARM_CLIENT_ID"
+          azure_client_secret = "$ARM_CLIENT_SECRET"
+          azure_tenant_id = "$ARM_TENANT_ID"
+          tags = {
+            Environment = "dev"
+            Project = "devops-test"
+          }
+          EOF
+                echo "Created variables for 04-bastion"
+                
+              elif [ "$MODULE_NUM" = "05" ]; then
+                cat > test.auto.tfvars << 'EOF'
+          resource_group_name = "rg-database-dev"
+          location = "eastus"
+          environment = "dev"
+          azure_subscription_id = "$ARM_SUBSCRIPTION_ID"
+          azure_client_id = "$ARM_CLIENT_ID"
+          azure_client_secret = "$ARM_CLIENT_SECRET"
+          azure_tenant_id = "$ARM_TENANT_ID"
+          tags = {
+            Environment = "dev"
+            Project = "devops-test"
+          }
+          EOF
+            echo "Created variables for 05-database"
           fi
 
           echo "Created test.auto.tfvars for module $MODULE_NUM"
