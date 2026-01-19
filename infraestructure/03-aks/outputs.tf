@@ -41,10 +41,10 @@ output "aks_cluster_identity_principal_id" {
   value       = azurerm_kubernetes_cluster.devops.identity[0].principal_id
 }
 
-output "acr_id" {
-  description = "The ID of the Azure Container Registry"
-  value       = azurerm_container_registry.this.id
-}
+# output "acr_id" {
+#   description = "The ID of the Azure Container Registry"
+#   value       = azurerm_container_registry.this.id
+# }
 
 output "postgresql_password_secret_id" {
   value     = azurerm_key_vault_secret.postgresql_password.id
