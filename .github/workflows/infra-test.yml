@@ -10,17 +10,22 @@ on:
         type: choice
         options:
           - dev
-      module:
-        description: "Module to test"
-        required: false
-        default: "network"
+      module_number:
+        description: "Module number to test (ex: 01, 02, etc.)"
+        required: true
+        default: "01"
         type: choice
         options:
-          - network
-          - acr
-          - aks
-          - database
-          - bastion
+          - "00"
+          - "01"
+          - "02"
+          - "03"
+          - "04"
+          - "05"
+
+env:
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+  MODULE_NUMBER: ${{ github.event.inputs.module_number }}
 
 jobs:
   terraform-plan:
@@ -30,14 +35,40 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.6.0"
 
+      - name: Validate Module Exists
+        id: validate-module
+        run: |
+          MODULE_DIR="infraestructure/${{ env.MODULE_NUMBER }}-*"
+          echo "🔍 Looking for module: $MODULE_DIR"
+
+          # Listar módulos disponíveis
+          echo "📦 Available modules:"
+          find infraestructure -maxdepth 1 -type d -name "[0-9]*" | sort
+
+          # Encontrar módulo específico
+          FOUND_DIR=$(find infraestructure -maxdepth 1 -type d -name "${{ env.MODULE_NUMBER }}-*" | head -1)
+
+          if [ -n "$FOUND_DIR" ] && [ -d "$FOUND_DIR" ]; then
+            MODULE_NAME=$(basename "$FOUND_DIR")
+            echo "✅ Module found: $MODULE_NAME"
+            echo "MODULE_NAME=$MODULE_NAME" >> $GITHUB_OUTPUT
+            echo "MODULE_PATH=$FOUND_DIR" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Module ${{ env.MODULE_NUMBER }}-* not found"
+            exit 1
+          fi
+
       - name: Azure Login
         run: |
+          echo "🔑 Logging into Azure..."
           az login \
             --service-principal \
             --username "${{ secrets.ARM_CLIENT_ID }}" \
@@ -45,36 +76,86 @@ jobs:
             --tenant "${{ secrets.ARM_TENANT_ID }}"
 
           az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+          echo "✅ Azure login successful"
 
       - name: Initialize Terraform Module
         run: |
-          MODULE_DIR="infraestructure/${{ github.event.inputs.module }}"
+          echo "🧱 Initializing module: ${{ steps.validate-module.outputs.MODULE_NAME }}"
+          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
 
-          if [ ! -d "$MODULE_DIR" ]; then
-            echo "❌ Module directory not found: $MODULE_DIR"
-            exit 1
-          fi
-
-          echo "🧱 Testing module: ${{ github.event.inputs.module }}"
+          # Mostrar estrutura do módulo
+          echo "📁 Module structure:"
+          find . -name "*.tf" -o -name "*.tfvars" | sort
 
           # Usar backend local para teste
-          cd "$MODULE_DIR"
-          terraform init -backend=false
+          terraform init -backend=false -input=false
+          echo "✅ Terraform initialized"
 
       - name: Terraform Validate
         run: |
-          cd "infraestructure/${{ github.event.inputs.module }}"
+          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
+          echo "🔍 Validating Terraform syntax..."
           terraform validate
+          echo "✅ Terraform validation passed"
+
+      - name: Terraform Format Check
+        run: |
+          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
+          echo "📝 Checking Terraform formatting..."
+          terraform fmt -check -recursive
+          echo "✅ Terraform formatting is correct"
 
       - name: Terraform Plan (What-if)
+        id: plan
         run: |
-          cd "infraestructure/${{ github.event.inputs.module }}"
-          terraform plan \
-            -var="environment=${{ github.event.inputs.environment }}" \
-            -var="location=eastus" \
-            -out=tfplan \
-            -input=false
+          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
 
-          echo "✅ Plan generated successfully"
-          echo "📋 Resources that would be created:"
-          terraform show -json tfplan | jq '.planned_values.root_module.resources[].address' || true
+          # Criar arquivo de variáveis temporário para teste
+          cat > test.tfvars << EOF
+          environment = "${{ env.ENVIRONMENT }}"
+          location = "eastus"
+          project_name = "devops-test"
+          EOF
+
+          echo "📋 Running terraform plan..."
+          terraform plan \
+            -var-file="test.tfvars" \
+            -out=tfplan \
+            -input=false \
+            -detailed-exitcode
+
+          PLAN_EXIT_CODE=$?
+
+          if [ $PLAN_EXIT_CODE -eq 0 ]; then
+            echo "✅ No changes needed"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          elif [ $PLAN_EXIT_CODE -eq 2 ]; then
+            echo "📝 Changes detected"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            
+            # Mostrar resumo das mudanças
+            echo ""
+            echo "📊 Change Summary:"
+            terraform show -json tfplan | jq -r '
+              .resource_changes[] | 
+              "\(.type) \(.name): \(.change.actions | join(", "))"
+            ' | head -20
+          else
+            echo "❌ Terraform plan failed with exit code: $PLAN_EXIT_CODE"
+            exit 1
+          fi
+
+      - name: Show Plan Details
+        if: steps.plan.outputs.has_changes == 'true'
+        run: |
+          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
+          echo "🔍 Detailed plan output:"
+          terraform show tfplan | head -100
+
+      - name: Upload Plan as Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ steps.validate-module.outputs.MODULE_NAME }}-${{ github.run_id }}
+          path: ${{ steps.validate-module.outputs.MODULE_PATH }}/tfplan
+          retention-days: 7
