@@ -120,6 +120,26 @@ jobs:
           done
 
           echo "BACKUP_DIR=${BACKUP_DIR}" >> $GITHUB_ENV
+      - name: Configure Provider Authentication
+        run: |
+          # Exportar variáveis ARM_* para o Terraform
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+          echo "ARM_CLIENT_ID=${{ secrets.ARM_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=${{ secrets.ARM_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
+
+      - name: Replace Backend Placeholders
+        run: |
+          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
+
+          # Usar valores padrão ou do job setup
+          TF_RG="${TF_BACKEND_RG:-rg-terraform-state-dev}"
+          TF_SA="${TF_BACKEND_SA:-tfstatedevdevops}"
+          TF_CONTAINER="${TF_BACKEND_CONTAINER:-tfstate}"
+
+          sed -i "s|__TF_BACKEND_RESOURCE_GROUP__|${TF_RG}|g" backend.tf
+          sed -i "s|__TF_BACKEND_STORAGE_ACCOUNT__|${TF_SA}|g" backend.tf
+          sed -i "s|__TF_BACKEND_CONTAINER__|${TF_CONTAINER}|g" backend.tf
 
       - name: Run Terraform Commands (No Backend)
         run: |

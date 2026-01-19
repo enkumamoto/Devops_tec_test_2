@@ -42,3 +42,34 @@ variable "vnet_name" {
   description = "Name for VNet"
   type        = string
 }
+
+variable "subscription_id" {
+  description = "Azure Subscription ID"
+  type        = string
+  default     = ""
+}
+
+variable "client_id" {
+  description = "Azure Service Principal Client ID"
+  type        = string
+  default     = ""
+}
+
+variable "client_secret" {
+  description = "Azure Service Principal Client Secret"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "tenant_id" {
+  description = "Azure Tenant ID"
+  type        = string
+  default     = ""
+}
+
+variable "project_name" {
+  description = "Project name for naming resources"
+  type        = string
+  default     = "devops"
+}
