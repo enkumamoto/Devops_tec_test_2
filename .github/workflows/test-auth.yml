@@ -1,0 +1,134 @@
+name: Test Azure Authentication
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: "Enable debug output"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  test-auth:
+    runs-on: ubuntu-latest
+    environment: test
+    
+    steps:
+      # === PASSO CRÍTICO ADICIONADO ===
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Pega todo o histórico
+      
+      - name: Check Azure Secrets
+        run: |
+          echo "🔐 Testing Azure authentication..."
+          echo "======================================"
+          
+          # Check each secret (without revealing values)
+          SECRETS=("ARM_CLIENT_ID" "ARM_CLIENT_SECRET" "ARM_SUBSCRIPTION_ID" "ARM_TENANT_ID" "AKS_RESOURCE_GROUP")
+          
+          for secret in "${SECRETS[@]}"; do
+            if [ -n "${{ secrets[secret] }}" ]; then
+              echo "✅ $secret: Configured"
+            else
+              echo "❌ $secret: MISSING"
+            fi
+          done
+          echo ""
+      
+      - name: Test Azure Login
+        run: |
+          echo "🔑 Attempting Azure login with Service Principal..."
+          
+          # Login usando variáveis de ambiente (mais seguro)
+          export ARM_CLIENT_ID="${{ secrets.ARM_CLIENT_ID }}"
+          export ARM_CLIENT_SECRET="${{ secrets.ARM_CLIENT_SECRET }}"
+          export ARM_TENANT_ID="${{ secrets.ARM_TENANT_ID }}"
+          
+          az login \
+            --service-principal \
+            --username "$ARM_CLIENT_ID" \
+            --password "$ARM_CLIENT_SECRET" \
+            --tenant "$ARM_TENANT_ID" \
+            --output none
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Azure login successful!"
+            
+            # Set subscription
+            az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+            
+            # Show account info
+            echo ""
+            echo "📋 Subscription Information:"
+            az account show --query "{'Subscription Name':name, 'Subscription ID':id}" -o table
+            
+            # Test basic permissions
+            echo ""
+            echo "🔧 Testing permissions..."
+            RG_COUNT=$(az group list --query "length([].name)" -o tsv)
+            echo "Resource Groups accessible: $RG_COUNT"
+            
+          else
+            echo "❌ Azure login failed!"
+            exit 1
+          fi
+      
+      - name: Check Repository Structure
+        run: |
+          echo ""
+          echo "📁 Repository structure:"
+          echo "======================================"
+          pwd
+          ls -la
+          
+          if [ -d "infraestructure" ]; then
+            echo "✅ 'infraestructure' directory found!"
+            echo ""
+            echo "📦 Contents of infraestructure/:"
+            ls -la infraestructure/
+            
+            # List modules
+            echo ""
+            echo "🔍 Terraform modules found:"
+            find infraestructure -maxdepth 2 -name "*.tf" | head -10
+          else
+            echo "❌ 'infraestructure' directory NOT found!"
+            echo ""
+            echo "⚠️  Available directories:"
+            find . -type d -name "*infra*" || echo "No infra directories found"
+            exit 1
+          fi
+      
+      - name: Verify Terraform Files
+        if: success()
+        run: |
+          echo ""
+          echo "🧱 Verifying Terraform files..."
+          echo "======================================"
+          
+          MODULE_COUNT=0
+          for module in infraestructure/0*; do
+            if [ -d "$module" ]; then
+              MODULE_COUNT=$((MODULE_COUNT + 1))
+              echo ""
+              echo "Module: $(basename $module)"
+              
+              # Count .tf files
+              TF_FILES=$(find "$module" -name "*.tf" | wc -l)
+              echo "  .tf files: $TF_FILES"
+              
+              # Check critical files
+              [ -f "$module/main.tf" ] && echo "  ✅ main.tf" || echo "  ❌ main.tf (MISSING)"
+              [ -f "$module/variables.tf" ] && echo "  ✅ variables.tf" || echo "  ❌ variables.tf (MISSING)"
+            fi
+          done
+          
+          if [ $MODULE_COUNT -eq 0 ]; then
+            echo "⚠️  No numbered modules found (00-, 01-, etc.)"
+          else
+            echo ""
+            echo "✅ Found $MODULE_COUNT Terraform modules"
+          fi
