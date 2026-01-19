@@ -399,6 +399,17 @@ on:
 jobs:
   terraform-test:
     runs-on: ubuntu-latest
+    environment: test
+
+    env:
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      ARM_USE_MSI: "false"
+      ARM_USE_CLI: "false"
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
 
     steps:
       - name: Checkout Repository
@@ -410,7 +421,6 @@ jobs:
       - name: Find Module
         id: find-module
         run: |
-          MODULE_PATH="infraestructure/${{ github.event.inputs.module_number }}-*"
           FOUND=$(find infraestructure -maxdepth 1 -type d -name "${{ github.event.inputs.module_number }}-*" | head -1)
 
           if [ -z "$FOUND" ]; then
@@ -448,6 +458,10 @@ jobs:
           bastion_subnet_address_prefixes = ["10.0.3.0/24"]
           location = "eastus"
           environment = "dev"
+          subscription_id = "$ARM_SUBSCRIPTION_ID"
+          client_id = "$ARM_CLIENT_ID"
+          client_secret = "$ARM_CLIENT_SECRET"
+          tenant_id = "$ARM_TENANT_ID"
           tags = {
             Environment = "dev"
             Project = "devops-test"
@@ -459,15 +473,10 @@ jobs:
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
           terraform validate
 
-      # - name: Check Formatting
-      #   run: |
-      #     cd "${{ steps.find-module.outputs.MODULE_PATH }}"
-      #     terraform fmt -check
-
       - name: Run Terraform Plan
         run: |
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
-          terraform plan -input=false
+          terraform plan -input=false -compact-warnings
 
       - name: Restore Backend
         if: always()
