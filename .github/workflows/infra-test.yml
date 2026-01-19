@@ -412,6 +412,24 @@ jobs:
       TF_INPUT: "false"
 
     steps:
+      - name: Configure Azure Authentication
+        run: |
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+          echo "ARM_CLIENT_ID=${{ secrets.ARM_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=${{ secrets.ARM_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
+
+          # Verificar se as variáveis foram carregadas
+          echo "Verificando variáveis ARM_*:"
+          echo "ARM_TENANT_ID=${ARM_TENANT_ID}"
+          echo "Comprimento: ${#ARM_TENANT_ID}"
+
+          # O GUID deve ter 36 caracteres (incluindo hifens)
+          if [ ${#ARM_TENANT_ID} -lt 30 ]; then
+            echo "ERRO: ARM_TENANT_ID parece muito curto"
+            echo "Valor: ${ARM_TENANT_ID}"
+            exit 1
+          fi
       - name: Checkout Repository
         uses: actions/checkout@v4
 

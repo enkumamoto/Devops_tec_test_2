@@ -21,7 +21,6 @@ tags = {
   ManagedBy   = "Terraform"
   Owner       = "Platform Team"
   CostCenter  = "PROD-001"
-  Repository  = "https://github.com/your-org/devops-technical-test"
   Criticality = "high"
   Compliance  = "pci-dss"
 }
