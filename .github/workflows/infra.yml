@@ -24,6 +24,10 @@ on:
 env:
   ENVIRONMENT: ${{ github.event.inputs.environment }}
   TF_ACTION: ${{ github.event.inputs.tf_action }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
 jobs:
   # =========================
@@ -62,7 +66,7 @@ jobs:
           echo "Container: ${{ steps.get-backend.outputs.tf_container }}"
 
   # =========================
-  # 2. NETWORK - Primeiro módulo
+  # 2. NETWORK
   # =========================
   network:
     runs-on: ubuntu-latest
@@ -90,13 +94,13 @@ jobs:
           echo "✅ Azure login successful"
 
       - name: Terraform Init - Network
-        working-directory: infraestructure/01-network
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
-            -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
-            -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
-            -backend-config="key=network.tfstate" \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}" \
+            -backend-config="key=network.tfstate"
+
             -input=false \
             -reconfigure
 
@@ -104,9 +108,11 @@ jobs:
         working-directory: infraestructure/01-network
         run: |
           terraform plan \
-            -var="environment=${{ github.event.inputs.environment }}" \
-            -var="location=eastus" \
-            -out=tfplan \
+            -var="azure_subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -var="azure_client_id=${{ secrets.AZURE_CLIENT_ID }}" \
+            -var="azure_client_secret=${{ secrets.AZURE_CLIENT_SECRET }}" \
+            -var="azure_tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -out=tfplan
             -input=false
 
       - name: Terraform Apply - Network
