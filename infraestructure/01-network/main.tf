@@ -1,6 +1,6 @@
 
 resource "azurerm_resource_group" "network" {
-  name     = var.resource_group_name
+  name     = "rg-${var.resource_group_name}-${var.environment}"
   location = var.location
 
   tags = merge(var.tags, {
