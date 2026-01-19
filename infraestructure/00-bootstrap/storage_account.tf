@@ -1,12 +1,6 @@
 resource "azurerm_storage_account" "devops" {
   # Nome deve ser único globalmente, max 24 chars, somente lowercase
-  name = lower(
-    substr(
-      replace("${var.storage_account_prefix}${var.environment}", "-", ""),
-      0, 24
-    )
-  )
-
+  name                     = "${azurerm_resource_group.devops.name}devops"
   resource_group_name      = azurerm_resource_group.devops.name
   location                 = azurerm_resource_group.devops.location
   account_tier             = "Standard"
