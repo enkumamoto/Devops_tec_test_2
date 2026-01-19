@@ -12,7 +12,7 @@ resource "azurerm_subnet" "aks" {
 
   lifecycle {
     create_before_destroy = true
-    ignore_changes        = [tags["LastModified"]]
+    #ignore_changes        = [tags["LastModified"]]
   }
 
   depends_on = [azurerm_virtual_network.devops]
@@ -40,7 +40,7 @@ resource "azurerm_subnet" "database" {
 
   lifecycle {
     create_before_destroy = true
-    ignore_changes        = [tags["LastModified"]]
+    #ignore_changes        = [tags["LastModified"]]
   }
 
   depends_on = [azurerm_virtual_network.devops]
@@ -59,7 +59,7 @@ resource "azurerm_subnet" "bastion" {
 
   lifecycle {
     create_before_destroy = true
-    ignore_changes        = [tags["LastModified"]]
+    #ignore_changes        = [tags["LastModified"]]
   }
 
   depends_on = [azurerm_virtual_network.devops]
