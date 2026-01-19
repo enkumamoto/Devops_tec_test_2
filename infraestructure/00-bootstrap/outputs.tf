@@ -1,72 +1,58 @@
 output "resource_group_name" {
-  description = "Name of the Resource Group created for Terraform state backend"
+  description = "Name of the created resource group"
   value       = azurerm_resource_group.devops.name
 }
 
-output "resource_group_id" {
-  description = "ID of the Resource Group created for Terraform state backend"
-  value       = azurerm_resource_group.devops.id
-}
-
-output "resource_group_location" {
-  description = "Location of the Resource Group created for Terraform state backend"
-  value       = azurerm_resource_group.devops.location
-}
-
 output "storage_account_name" {
-  description = "Name of the Storage Account created for Terraform state backend"
+  description = "Name of the created storage account"
   value       = azurerm_storage_account.devops.name
-}
-
-output "storage_account_id" {
-  description = "ID of the Storage Account created for Terraform state backend"
-  value       = azurerm_storage_account.devops.id
-}
-
-output "storage_account_primary_blob_endpoint" {
-  description = "Primary blob endpoint URL for the Storage Account"
-  value       = azurerm_storage_account.devops.primary_blob_endpoint
+  sensitive   = false
 }
 
 output "storage_container_name" {
-  description = "Name of the blob container for Terraform state files"
+  description = "Name of the blob container"
   value       = azurerm_storage_container.devops.name
 }
 
-output "storage_account_primary_access_key" {
-  description = "Primary access key for the Storage Account (sensitive - use with caution)"
-  value       = azurerm_storage_account_primary_access_key.devops.value
-  sensitive   = true # Mark as sensitive to hide in console output
+output "storage_account_id" {
+  description = "ID of the storage account"
+  value       = azurerm_storage_account.devops.id
 }
 
-output "environment" {
-  description = "Environment name used for this deployment"
-  value       = var.environment
+# ✅ Use data source para obter a chave
+output "primary_access_key" {
+  description = "Primary access key for the storage account"
+  value       = data.azurerm_storage_account.devops.primary_access_key
+  sensitive   = true
+}
+
+output "primary_connection_string" {
+  description = "Primary connection string for the storage account"
+  value       = data.azurerm_storage_account.devops.primary_connection_string
+  sensitive   = true
+}
+
+output "secondary_access_key" {
+  description = "Secondary access key for the storage account"
+  value       = data.azurerm_storage_account.devops.secondary_access_key
+  sensitive   = true
+}
+
+output "secondary_connection_string" {
+  description = "Secondary connection string for the storage account"
+  value       = data.azurerm_storage_account.devops.secondary_connection_string
+  sensitive   = true
 }
 
 output "location" {
-  description = "Azure region used for this deployment"
-  value       = var.location
+  description = "Azure region where resources were created"
+  value       = azurerm_resource_group.devops.location
 }
 
-output "backend_config" {
-  description = "Complete backend configuration for Terraform modules (as map)"
-  value = {
-    resource_group_name  = azurerm_resource_group.devops.name
-    storage_account_name = azurerm_storage_account.devops.name
-    container_name       = azurerm_storage_container.devops.name
-    key_prefix           = "${var.environment}/"
-  }
-}
-
-output "terraform_backend_config_hcl" {
-  description = "Terraform backend configuration in HCL format (for automation)"
-  value       = <<-EOT
-    backend "azurerm" {
-      resource_group_name  = "${azurerm_resource_group.devops.name}"
-      storage_account_name = "${azurerm_storage_account.devops.name}"
-      container_name       = "${azurerm_storage_container.devops.name}"
-      key                  = "__MODULE_NAME__.tfstate"
-    }
-  EOT
+output "tags" {
+  description = "Tags applied to all resources"
+  value = merge(var.tags, {
+    Environment = var.environment
+    Module      = "bootstrap"
+  })
 }

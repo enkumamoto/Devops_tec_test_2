@@ -1,26 +1,217 @@
-# Terraform files
+# ============================================
+# TERRAFORM - IGNORE GLOBALMENTE
+# ============================================
+
+# Estado do Terraform
 **/.terraform/
 **/*.tfstate
 **/*.tfstate.*
 **/.terraform.lock.hcl
+**/.terraform.tfstate.lock.info
 
-# Terraform variable files
-**/terraform.tfvars
+# Variáveis sensíveis (todas as extensões possíveis)
 **/*.auto.tfvars
+**/terraform.tfvars.json
+**/*.tfvars.json
 
-# Local override files
+# Arquivos de override local
 **/override.tf
 **/override.tf.json
 **/_override.tf
 **/_override.tf.json
+**/*.override.tf
+**/*.override.tf.json
 
-# Crash log files
-crash.log
-crash.*.log
+# Logs de crash
+**/crash.log
+**/crash.*.log
+**/*.crash.log
 
-# Exclude all .tfvars files that might contain sensitive data
-*.tfvars
+# Plan files
+**/*.tfplan
+**/plan.out
+**/tfplan
 
-# Ignore CLI configuration files
-.terraformrc
+# Cache e dados temporários
+**/.terraform.tfstate*
+**/.terraformrc
 terraform.rc
+
+# Arquivos de backend gerados automaticamente
+**/backend.tf.json
+
+# ============================================
+# PROVEDORES AZURE ESPECÍFICOS
+# ============================================
+
+# Arquivos de credenciais Azure
+**/azure-credentials*.json
+**/azure-creds*.json
+**/sp-*.json
+**/*-credentials.json
+
+# Service Principal outputs
+**/sp-output*.json
+**/service-principal*.json
+
+# ============================================
+# DOCKER & CONTAINERS
+# ============================================
+
+# Docker
+**/.dockerignore
+**/Dockerfile.dev
+**/docker-compose.override.yml
+**/docker-compose.prod.yml
+
+# Build artifacts
+**/*-docker-context
+**/.docker-build
+
+# ============================================
+# KUBERNETES
+# ============================================
+
+# Kubeconfigs locais
+**/kubeconfig
+**/*.kubeconfig
+**/.kube/
+**/kubeconfig-*
+**/*-kubeconfig.yaml
+
+# Secrets gerados localmente
+**/secret-*.yaml
+**/*-secrets.yaml
+**/generated-*.yaml
+
+# ============================================
+# SISTEMA OPERACIONAL / IDE
+# ============================================
+
+# macOS
+**/.DS_Store
+**/._*
+.DS_Store
+
+# Windows
+**/Thumbs.db
+**/Desktop.ini
+
+# Linux
+*~
+
+# VS Code
+**/.vscode/
+**/*.code-workspace
+
+# IntelliJ
+**/.idea/
+**/*.iml
+
+# ============================================
+# CI/CD & AUTOMAÇÃO
+# ============================================
+
+# GitHub Actions artifacts
+**/.github/workflows/*.plan
+**/.github/workflows/*.tfstate
+**/.github/actions/*/dist/
+
+# Local CI files
+**/.github/local/*
+**/.gitlab/local/*
+
+# ============================================
+# AMBIENTE VIRTUAL / DEPENDÊNCIAS
+# ============================================
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/.python-version
+**/Pipfile.lock
+**/poetry.lock
+**/.venv/
+**/venv/
+**/env/
+
+# Node.js
+**/node_modules/
+**/package-lock.json
+**/yarn.lock
+**/.npm/
+**/.yarn/
+
+# ============================================
+# ARQUIVOS TEMPORÁRIOS
+# ============================================
+
+# Logs
+**/*.log
+**/logs/
+**/.log
+
+# Temp files
+**/tmp/
+**/temp/
+**/*.tmp
+**/*.temp
+
+# Backup files
+**/*.bak
+**/*.backup
+**/*.old
+
+# ============================================
+# DOCUMENTAÇÃO / BUILD
+# ============================================
+
+# Arquivos de build
+**/build/
+**/dist/
+**/out/
+**/target/
+
+# Documentação gerada
+**/site/
+**/.vuepress/dist
+**/.sphinx-build/
+
+# ============================================
+# EXCLUSÕES ESPECÍFICAS DO PROJETO
+# ============================================
+
+# Configurações locais do projeto
+**/.env
+**/.env.local
+**/.env.*.local
+**/.env.development
+**/.env.production
+
+# Outputs de scripts
+**/output/
+**/generated/
+**/.generated/
+
+# Certificados/SSL locais
+**/*.pem
+**/*.key
+**/*.crt
+**/*.csr
+**/ssl/
+**/certs/
+
+# ============================================
+# NEVER COMMIT - BLACKLIST EXPLÍCITA
+# ============================================
+
+# NUNCA comitar sob qualquer circunstância
+**/secrets/
+**/passwords/
+**/credentials/
+**/private-keys/
+**/azure-creds/
+
+# Palavras-chave em qualquer arquivo
+# (Git não suporta isso no .gitignore, mas é bom lembrar)
+# password*, secret*, key*, token*, credential*

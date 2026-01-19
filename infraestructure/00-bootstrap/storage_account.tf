@@ -6,9 +6,10 @@ resource "random_string" "devops_suffix" {
 }
 
 resource "azurerm_storage_account" "devops" {
+  # Nome deve ser único globalmente, max 24 chars, somente lowercase
   name = lower(
     substr(
-      "${var.storage_account_name}${var.environment}${random_string.devops_suffix.result}",
+      replace("${var.storage_account_prefix}${var.environment}${random_string.devops_suffix.result}", "-", ""),
       0, 24
     )
   )
@@ -19,15 +20,15 @@ resource "azurerm_storage_account" "devops" {
   account_replication_type = "LRS"
   account_kind             = "StorageV2"
 
+  # Segurança
   https_traffic_only_enabled      = true
   min_tls_version                 = "TLS1_2"
-  allow_nested_items_to_be_public = false
+  allow_nested_items_to_be_public = false # ← CORRIGIDO AQUI
   public_network_access_enabled   = false
 
-
+  # Blob properties
   blob_properties {
     versioning_enabled = true
-
 
     delete_retention_policy {
       days = 30
@@ -55,13 +56,13 @@ resource "azurerm_storage_account" "devops" {
 
 resource "azurerm_storage_container" "devops" {
   name                  = var.storage_container_name
-  storage_account_id    = azurerm_storage_account.devops.id
+  storage_account_name  = azurerm_storage_account.devops.name # ← CORRETO
   container_access_type = "private"
 
   metadata = {
     purpose     = "terraform-state-files"
     environment = var.environment
-    created-by  = "terraform-bootstrap"
+    created_by  = "terraform-bootstrap"
   }
 }
 
@@ -75,10 +76,9 @@ resource "azurerm_storage_account_network_rules" "devops" {
   bypass = ["AzureServices"]
 }
 
-resource "azurerm_storage_account_primary_access_key" "devops" {
-  storage_account_id = azurerm_storage_account.devops.id
+data "azurerm_storage_account" "devops" {
+  name                = azurerm_storage_account.devops.name
+  resource_group_name = azurerm_resource_group.devops.name
 
-  lifecycle {
-    create_before_destroy = true
-  }
+  depends_on = [azurerm_storage_account.devops]
 }

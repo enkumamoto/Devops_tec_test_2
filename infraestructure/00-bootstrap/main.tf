@@ -1,5 +1,6 @@
 terraform {
-  required_version = ">= 1.5.0"
+  required_version = ">= 1.0"
+
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -11,15 +12,24 @@ terraform {
     }
   }
 
-  backend "local" {
-    path = "terraform.tfstate"
-  }
+  # Usar backend local para bootstrap
+  backend "local" {}
 }
 
 provider "azurerm" {
-  features {}
-  subscription_id = var.subscription_id
+  features {
+    resource_group {
+      prevent_deletion_if_contains_resources = false
+    }
+    key_vault {
+      purge_soft_delete_on_destroy = true
+    }
+  }
+}
+
+provider "random" {
+  # Configuração padrão
 }
 
 
-data "azurerm_client_config" "current" {}
+#data "azurerm_client_config" "current" {}
