@@ -23,6 +23,10 @@ on:
           - "04"
           - "05"
 
+env:
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+  MODULE_NUMBER: ${{ github.event.inputs.module_number }}
+
 jobs:
   terraform-test:
     runs-on: ubuntu-latest
@@ -31,22 +35,70 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
 
       - name: Validate Module Exists
         id: validate-module
         run: |
-          # ... (mesmo código que já tem)
+          MODULE_DIR="infraestructure/${{ env.MODULE_NUMBER }}-*"
+          echo "🔍 Looking for module: $MODULE_DIR"
+
+          # Listar módulos disponíveis
+          echo "📦 Available modules:"
+          find infraestructure -maxdepth 1 -type d -name "[0-9]*" | sort
+
+          # Encontrar módulo específico
+          FOUND_DIR=$(find infraestructure -maxdepth 1 -type d -name "${{ env.MODULE_NUMBER }}-*" | head -1)
+
+          if [ -n "$FOUND_DIR" ] && [ -d "$FOUND_DIR" ]; then
+            MODULE_NAME=$(basename "$FOUND_DIR")
+            echo "✅ Module found: $MODULE_NAME"
+            echo "MODULE_NAME=$MODULE_NAME" >> $GITHUB_OUTPUT
+            echo "MODULE_PATH=$FOUND_DIR" >> $GITHUB_OUTPUT
+            
+            # Mostrar estrutura
+            echo "📁 Module structure:"
+            find "$FOUND_DIR" -name "*.tf" -o -name "*.tfvars" | sort
+          else
+            echo "❌ Module ${{ env.MODULE_NUMBER }}-* not found"
+            exit 1
+          fi
+
+      - name: Azure Login (Optional - for backend tests)
+        run: |
+          echo "🔑 Logging into Azure..."
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}" || echo "⚠️ Azure login optional for this test"
+
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}" || true
 
       - name: Create Temporary Terraform Files (NO BACKEND)
+        id: disable-backend
         run: |
           MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
+
+          echo "📁 Module path: ${MODULE_PATH}"
+
+          if [ ! -d "${MODULE_PATH}" ]; then
+            echo "❌ ERROR: Module directory does not exist: ${MODULE_PATH}"
+            exit 1
+          fi
+
           BACKUP_DIR="${MODULE_PATH}_backup_${GITHUB_RUN_ID}"
 
           # 1. Fazer backup dos arquivos originais
-          cp -r "${MODULE_PATH}" "${BACKUP_DIR}"
+          echo "💾 Creating backup in: ${BACKUP_DIR}"
+          mkdir -p "${BACKUP_DIR}"
+          cp -r "${MODULE_PATH}/"* "${BACKUP_DIR}/" 2>/dev/null || true
 
           # 2. Remover/renomear backend.tf se existir
           if [ -f "${MODULE_PATH}/backend.tf" ]; then
@@ -54,11 +106,16 @@ jobs:
             echo "⚠️ Temporarily disabled backend.tf for testing"
           fi
 
-          # 3. Se houver provider.tf ou main.tf com backend, comentar
+          # 3. Remover blocos de backend de outros arquivos .tf
           for file in "${MODULE_PATH}"/*.tf; do
             if [ -f "$file" ]; then
-              # Remover blocos de backend
-              sed -i '/^terraform {/,/^}/ {/backend "/,/}/d}' "$file" 2>/dev/null || true
+              # Usar uma abordagem mais segura com arquivo temporário
+              if grep -q "backend \"" "$file"; then
+                echo "🔧 Removing backend block from: $(basename "$file")"
+                TEMP_FILE="${file}.temp"
+                awk '/^terraform {/,/^}/ {if (/backend "/) skip=1; if (skip && /}/) skip=0; if (!skip) print} !/^terraform {/,/^}/ {print}' "$file" > "$TEMP_FILE"
+                mv "$TEMP_FILE" "$file"
+              fi
             fi
           done
 
@@ -68,22 +125,45 @@ jobs:
         run: |
           cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
 
-          # Inicializar SEM backend
+          echo "🧱 Initializing Terraform (no backend)..."
           terraform init -backend=false -input=false
 
-          # Validar
+          echo "🔍 Validating Terraform syntax..."
           terraform validate
 
-          # Fmt check
-          terraform fmt -check -recursive
+          echo "📝 Checking Terraform formatting..."
+          terraform fmt -check -recursive || echo "⚠️ Formatting issues found"
 
-          # Plan com variáveis de teste
+          # Criar arquivo de variáveis temporário para teste
+          cat > test.tfvars << EOF
+          environment = "${{ env.ENVIRONMENT }}"
+          location = "eastus"
+          project_name = "devops-test"
+          EOF
+
+          echo "📋 Running terraform plan..."
           terraform plan \
-            -var="environment=${{ env.ENVIRONMENT }}" \
-            -var="location=eastus" \
-            -var="project_name=devops-test" \
+            -var-file="test.tfvars" \
+            -out=tfplan \
             -input=false \
-            -lock=false
+            -detailed-exitcode
+
+          PLAN_EXIT_CODE=$?
+
+          if [ $PLAN_EXIT_CODE -eq 0 ]; then
+            echo "✅ No changes needed"
+          elif [ $PLAN_EXIT_CODE -eq 2 ]; then
+            echo "📝 Changes detected"
+            echo ""
+            echo "📊 Change Summary:"
+            terraform show -json tfplan | jq -r '
+              .resource_changes[] | 
+              "\(.type) \(.name): \(.change.actions | join(", "))"
+            ' | head -20
+          else
+            echo "❌ Terraform plan failed with exit code: $PLAN_EXIT_CODE"
+            exit 1
+          fi
 
       - name: Restore Original Files
         if: always()
@@ -91,11 +171,33 @@ jobs:
           MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
           BACKUP_DIR="${{ env.BACKUP_DIR }}"
 
+          echo "📁 Restoring original files..."
+
           if [ -d "$BACKUP_DIR" ]; then
-            # Restaurar arquivos originais
-            find "$BACKUP_DIR" -name "*.tf" -exec cp {} "$MODULE_PATH/" \;
+            # 1. Restaurar backend.tf se estava desabilitado
+            if [ -f "${MODULE_PATH}/backend.tf.disabled" ]; then
+              mv "${MODULE_PATH}/backend.tf.disabled" "${MODULE_PATH}/backend.tf"
+              echo "✅ Restored backend.tf"
+            fi
             
-            # Remover backup
+            # 2. Restaurar outros arquivos .tf do backup
+            for file in "$BACKUP_DIR"/*.tf; do
+              if [ -f "$file" ]; then
+                filename=$(basename "$file")
+                cp "$file" "${MODULE_PATH}/${filename}"
+                echo "✅ Restored: $filename"
+              fi
+            done
+            
+            # 3. Remover backup
             rm -rf "$BACKUP_DIR"
-            echo "✅ Original files restored"
+            echo "✅ Backup directory removed"
           fi
+
+      - name: Upload Plan as Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ steps.validate-module.outputs.MODULE_NAME }}-${{ github.run_id }}
+          path: ${{ steps.validate-module.outputs.MODULE_PATH }}/tfplan
+          retention-days: 7
