@@ -43,26 +43,26 @@ variable "vnet_name" {
   type        = string
 }
 
-variable "subscription_id" {
+variable "azure_subscription_id" {
   description = "Azure Subscription ID"
   type        = string
   default     = ""
 }
 
-variable "client_id" {
+variable "azure_client_id" {
   description = "Azure Service Principal Client ID"
   type        = string
   default     = ""
 }
 
-variable "client_secret" {
+variable "azure_client_secret" {
   description = "Azure Service Principal Client Secret"
   type        = string
   default     = ""
   sensitive   = true
 }
 
-variable "tenant_id" {
+variable "azure_tenant_id" {
   description = "Azure Tenant ID"
   type        = string
   default     = ""

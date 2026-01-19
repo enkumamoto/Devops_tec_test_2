@@ -467,7 +467,7 @@ jobs:
         run: |
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
 
-          cat > test.auto.tfvars << 'EOF'
+          cat > test.auto.tfvars << EOF
           resource_group_name = "rg-network-dev"
           vnet_name = "vnet-dev"
           vnet_address_space = ["10.0.0.0/16"]
@@ -476,15 +476,20 @@ jobs:
           bastion_subnet_address_prefixes = ["10.0.3.0/24"]
           location = "eastus"
           environment = "dev"
-          subscription_id = "$ARM_SUBSCRIPTION_ID"
-          client_id = "$ARM_CLIENT_ID"
-          client_secret = "$ARM_CLIENT_SECRET"
-          tenant_id = "$ARM_TENANT_ID"
+
+          # Provider authentication - EXPLÍCITO
+          azure_subscription_id = "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+          azure_client_id = "${{ secrets.ARM_CLIENT_ID }}"
+          azure_client_secret = "${{ secrets.ARM_CLIENT_SECRET }}"
+          azure_tenant_id = "${{ secrets.ARM_TENANT_ID }}"
+
           tags = {
             Environment = "dev"
             Project = "devops-test"
           }
           EOF
+
+          echo "Criado test.auto.tfvars"
 
       - name: Validate Configuration
         run: |
