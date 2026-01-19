@@ -41,7 +41,7 @@ jobs:
         id: get-backend
         run: |
           # Para o primeiro deploy, obtenha das secrets ou variáveis
-          # Depois do bootstrap, essas informações devem estar em secrets
+          ENV="${{ github.event.inputs.environment }}"
 
           if [ -n "${{ secrets.TF_STATE_RESOURCE_GROUP }}" ]; then
             echo "Using secrets for backend..."
@@ -51,8 +51,8 @@ jobs:
           else
             # Se não houver secrets, use valores padrão baseados no ambiente
             echo "Using default backend names..."
-            echo "tf_rg=rg-terraform-state-$ENVIRONMENT" >> $GITHUB_OUTPUT
-            echo "tf_sa=tfstate$(echo $ENVIRONMENT | cut -c1)devops" >> $GITHUB_OUTPUT
+            echo "tf_rg=rg-terraform-state-$ENV" >> $GITHUB_OUTPUT
+            echo "tf_sa=tfstate${ENV}devops" >> $GITHUB_OUTPUT
             echo "tf_container=tfstate" >> $GITHUB_OUTPUT
           fi
 
@@ -67,7 +67,7 @@ jobs:
   network:
     runs-on: ubuntu-latest
     needs: setup
-    environment: ${{ env.ENVIRONMENT }}
+    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - name: Checkout Repository
@@ -104,13 +104,13 @@ jobs:
         working-directory: infraestructure/01-network
         run: |
           terraform plan \
-            -var="environment=$ENVIRONMENT" \
+            -var="environment=${{ github.event.inputs.environment }}" \
             -var="location=eastus" \
             -out=tfplan \
             -input=false
 
       - name: Terraform Apply - Network
-        if: env.TF_ACTION == 'apply'
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/01-network
         run: terraform apply tfplan -input=false
 
@@ -120,7 +120,7 @@ jobs:
   acr:
     runs-on: ubuntu-latest
     needs: setup
-    environment: ${{ env.ENVIRONMENT }}
+    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - name: Checkout Repository
@@ -154,13 +154,13 @@ jobs:
         working-directory: infraestructure/02-acr
         run: |
           terraform plan \
-            -var="environment=$ENVIRONMENT" \
+            -var="environment=${{ github.event.inputs.environment }}" \
             -var="location=eastus" \
             -out=tfplan \
             -input=false
 
       - name: Terraform Apply - ACR
-        if: env.TF_ACTION == 'apply'
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/02-acr
         run: terraform apply tfplan -input=false
 
@@ -170,7 +170,7 @@ jobs:
   aks:
     runs-on: ubuntu-latest
     needs: [network, acr]
-    environment: ${{ env.ENVIRONMENT }}
+    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - name: Checkout Repository
@@ -204,13 +204,13 @@ jobs:
         working-directory: infraestructure/03-aks
         run: |
           terraform plan \
-            -var="environment=$ENVIRONMENT" \
+            -var="environment=${{ github.event.inputs.environment }}" \
             -var="location=eastus" \
             -out=tfplan \
             -input=false
 
       - name: Terraform Apply - AKS
-        if: env.TF_ACTION == 'apply'
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/03-aks
         run: terraform apply tfplan -input=false
 
@@ -220,7 +220,7 @@ jobs:
   database:
     runs-on: ubuntu-latest
     needs: network
-    environment: ${{ env.ENVIRONMENT }}
+    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - name: Checkout Repository
@@ -254,13 +254,13 @@ jobs:
         working-directory: infraestructure/05-database
         run: |
           terraform plan \
-            -var="environment=$ENVIRONMENT" \
+            -var="environment=${{ github.event.inputs.environment }}" \
             -var="location=eastus" \
             -out=tfplan \
             -input=false
 
       - name: Terraform Apply - Database
-        if: env.TF_ACTION == 'apply'
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/05-database
         run: terraform apply tfplan -input=false
 
@@ -270,7 +270,7 @@ jobs:
   bastion:
     runs-on: ubuntu-latest
     needs: network
-    environment: ${{ env.ENVIRONMENT }}
+    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - name: Checkout Repository
@@ -304,13 +304,13 @@ jobs:
         working-directory: infraestructure/04-bastion
         run: |
           terraform plan \
-            -var="environment=$ENVIRONMENT" \
+            -var="environment=${{ github.event.inputs.environment }}" \
             -var="location=eastus" \
             -out=tfplan \
             -input=false
 
       - name: Terraform Apply - Bastion
-        if: env.TF_ACTION == 'apply'
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/04-bastion
         run: terraform apply tfplan -input=false
 
@@ -333,14 +333,13 @@ jobs:
           echo "Bastion: ${{ needs.bastion.result }}"
 
           SUCCESS_COUNT=0
-          TOTAL_COUNT=0
+          TOTAL_COUNT=5
 
-          for job in "network" "acr" "aks" "database" "bastion"; do
-            TOTAL_COUNT=$((TOTAL_COUNT + 1))
-            if [ "${{ needs[${job}].result }}" = "success" ]; then
-              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-            fi
-          done
+          if [ "${{ needs.network.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
+          if [ "${{ needs.acr.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
+          if [ "${{ needs.aks.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
+          if [ "${{ needs.database.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
+          if [ "${{ needs.bastion.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
 
           echo ""
           echo "🎯 Summary: $SUCCESS_COUNT/$TOTAL_COUNT modules succeeded"
