@@ -12,8 +12,7 @@ terraform {
     }
   }
 
-  # Usar backend local para bootstrap
-  backend "local" {}
+  #backend "local" {}
 }
 
 provider "azurerm" {

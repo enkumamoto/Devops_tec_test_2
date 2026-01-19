@@ -87,8 +87,15 @@ jobs:
           echo "📁 Module structure:"
           find . -name "*.tf" -o -name "*.tfvars" | sort
 
-          # Usar backend local para teste
-          terraform init -backend=false -input=false
+          # Para o bootstrap, usar backend local normalmente
+          if [ "${{ env.MODULE_NUMBER }}" = "00" ]; then
+            echo "🔧 Initializing with local backend (bootstrap module)"
+            terraform init -input=false
+          else
+            # Para outros módulos, usar backend false apenas para validação
+            echo "🔧 Initializing without backend for validation"
+            terraform init -backend=false -input=false
+          fi
           echo "✅ Terraform initialized"
 
       - name: Terraform Validate
