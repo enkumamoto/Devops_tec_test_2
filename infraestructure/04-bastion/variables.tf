@@ -131,3 +131,28 @@ variable "ssh_public_key_path" {
   type        = string
   default     = "~/.ssh/id_rsa.pub"
 }
+
+variable "azure_subscription_id" {
+  description = "Azure Subscription ID"
+  type        = string
+  default     = ""
+}
+
+variable "azure_client_id" {
+  description = "Azure Service Principal Client ID"
+  type        = string
+  default     = ""
+}
+
+variable "azure_client_secret" {
+  description = "Azure Service Principal Client Secret"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "azure_tenant_id" {
+  description = "Azure Tenant ID"
+  type        = string
+  default     = ""
+}
