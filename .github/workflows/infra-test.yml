@@ -1,4 +1,378 @@
-name: Terraform Infrastructure TEST (No Backend)
+# name: Terraform Infrastructure TEST (No Backend)
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       environment:
+#         description: "Environment name"
+#         required: true
+#         default: "dev"
+#         type: choice
+#         options:
+#           - dev
+#       module_number:
+#         description: "Module number to test"
+#         required: true
+#         default: "01"
+#         type: choice
+#         options:
+#           - "00"
+#           - "01"
+#           - "02"
+#           - "03"
+#           - "04"
+#           - "05"
+
+# env:
+#   ENVIRONMENT: ${{ github.event.inputs.environment }}
+#   MODULE_NUMBER: ${{ github.event.inputs.module_number }}
+
+# jobs:
+#   terraform-test:
+#     runs-on: ubuntu-latest
+#     environment: test
+
+#     steps:
+#       - name: Checkout Repository
+#         uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 0
+
+#       - name: Setup Terraform
+#         uses: hashicorp/setup-terraform@v3
+#         with:
+#           terraform_version: "1.6.0"
+
+#       - name: Validate Module Exists
+#         id: validate-module
+#         run: |
+#           MODULE_DIR="infraestructure/${{ env.MODULE_NUMBER }}-*"
+#           echo "🔍 Looking for module: $MODULE_DIR"
+
+#           # Listar módulos disponíveis
+#           echo "📦 Available modules:"
+#           find infraestructure -maxdepth 1 -type d -name "[0-9]*" | sort
+
+#           # Encontrar módulo específico
+#           FOUND_DIR=$(find infraestructure -maxdepth 1 -type d -name "${{ env.MODULE_NUMBER }}-*" | head -1)
+
+#           if [ -n "$FOUND_DIR" ] && [ -d "$FOUND_DIR" ]; then
+#             MODULE_NAME=$(basename "$FOUND_DIR")
+#             echo "✅ Module found: $MODULE_NAME"
+#             echo "MODULE_NAME=$MODULE_NAME" >> $GITHUB_OUTPUT
+#             echo "MODULE_PATH=$FOUND_DIR" >> $GITHUB_OUTPUT
+
+#             # Mostrar estrutura
+#             echo "📁 Module structure:"
+#             find "$FOUND_DIR" -name "*.tf" -o -name "*.tfvars" | sort
+#           else
+#             echo "❌ Module ${{ env.MODULE_NUMBER }}-* not found"
+#             exit 1
+#           fi
+
+#       - name: Configure Provider Authentication
+#         id: setup-auth
+#         run: |
+#           # Configurar autenticação Azure via Service Principal
+#           echo "🔐 Setting up Azure authentication..."
+
+#           # Variáveis para o provider Terraform
+#           echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+#           echo "ARM_CLIENT_ID=${{ secrets.ARM_CLIENT_ID }}" >> $GITHUB_ENV
+#           echo "ARM_CLIENT_SECRET=${{ secrets.ARM_CLIENT_SECRET }}" >> $GITHUB_ENV
+#           echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
+
+#           # Log para debug (sem expor segredos completos)
+#           echo "✅ Authentication configured:"
+#           echo "   Subscription: ${ARM_SUBSCRIPTION_ID:0:8}..."
+#           echo "   Client ID: ${ARM_CLIENT_ID:0:8}..."
+#           echo "   Tenant ID: ${ARM_TENANT_ID:0:8}..."
+
+#       - name: Create Temporary Terraform Files (NO BACKEND)
+#         id: disable-backend
+#         run: |
+#           MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
+
+#           echo "📁 Module path: ${MODULE_PATH}"
+
+#           if [ ! -d "${MODULE_PATH}" ]; then
+#             echo "❌ ERROR: Module directory does not exist: ${MODULE_PATH}"
+#             exit 1
+#           fi
+
+#           BACKUP_DIR="${MODULE_PATH}_backup_${GITHUB_RUN_ID}"
+
+#           # 1. Fazer backup dos arquivos originais
+#           echo "💾 Creating backup in: ${BACKUP_DIR}"
+#           mkdir -p "${BACKUP_DIR}"
+#           cp -r "${MODULE_PATH}/"* "${BACKUP_DIR}/" 2>/dev/null || true
+
+#           # 2. Remover/renomear backend.tf se existir
+#           if [ -f "${MODULE_PATH}/backend.tf" ]; then
+#             mv "${MODULE_PATH}/backend.tf" "${MODULE_PATH}/backend.tf.disabled"
+#             echo "⚠️ Temporarily disabled backend.tf for testing"
+#           fi
+
+#           # 3. Remover blocos de backend de outros arquivos .tf
+#           for file in "${MODULE_PATH}"/*.tf; do
+#             if [ -f "$file" ]; then
+#               # Verificar se tem backend block
+#               if grep -q "backend \"" "$file"; then
+#                 echo "🔧 Removing backend block from: $(basename "$file")"
+#                 # Usar awk para remover bloco backend de forma segura
+#                 awk '
+#                   /^terraform {/ { in_terraform=1 }
+#                   in_terraform && /backend "/ { in_backend=1 }
+#                   in_backend && /}/ { in_backend=0; next }
+#                   !in_backend { print }
+#                   /^}/ { in_terraform=0 }
+#                 ' "$file" > "${file}.temp" && mv "${file}.temp" "$file"
+#               fi
+#             fi
+#           done
+
+#           echo "BACKUP_DIR=${BACKUP_DIR}" >> $GITHUB_ENV
+
+#       - name: Replace Backend Placeholders (for modules with backend.tf)
+#         if: env.MODULE_NUMBER != '00'
+#         run: |
+#           MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
+
+#           # Verificar se há backend.tf.disabled (que foi renomeado)
+#           if [ -f "${MODULE_PATH}/backend.tf.disabled" ]; then
+#             echo "🔧 Configurando backend placeholders..."
+
+#             # Usar valores consistentes com o bootstrap
+#             # Baseado na sua resposta: Storage Account = "rg-terraform-state-dev"
+#             # Mas isso parece ser o Resource Group. Precisamos do nome real do Storage Account
+#             # Vou usar um padrão baseado no environment
+#             TF_RG="rg-terraform-state-${{ env.ENVIRONMENT }}"
+#             TF_SA="tfstate${{ env.ENVIRONMENT }}devops"
+#             TF_CONTAINER="tfstate"
+
+#             echo "   Resource Group: ${TF_RG}"
+#             echo "   Storage Account: ${TF_SA}"
+#             echo "   Container: ${TF_CONTAINER}"
+
+#             # Aplicar substituições no arquivo desabilitado
+#             sed -i \
+#               -e "s|__TF_BACKEND_RESOURCE_GROUP__|${TF_RG}|g" \
+#               -e "s|__TF_BACKEND_STORAGE_ACCOUNT__|${TF_SA}|g" \
+#               -e "s|__TF_BACKEND_CONTAINER__|${TF_CONTAINER}|g" \
+#               "${MODULE_PATH}/backend.tf.disabled"
+
+#             echo "✅ Backend placeholders substituídos"
+#           else
+#             echo "ℹ️ No backend.tf found in this module"
+#           fi
+
+#       - name: Run Terraform Commands (No Backend)
+#         env:
+#           # Garantir que as variáveis do provider estão disponíveis
+#           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+#           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+#           ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+#           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+#           # Configurações do Terraform
+#           TF_IN_AUTOMATION: "true"
+#           TF_INPUT: "false"
+#           TF_CLI_ARGS: "-no-color"
+#         run: |
+#           cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
+
+#           echo "🔐 Provider authentication status:"
+#           echo "   ARM_SUBSCRIPTION_ID: ${ARM_SUBSCRIPTION_ID:0:12}..."
+#           echo "   ARM_CLIENT_ID: ${ARM_CLIENT_ID:0:12}..."
+#           echo "   ARM_TENANT_ID: ${ARM_TENANT_ID:0:12}..."
+#           echo "   ARM_CLIENT_SECRET: [PROTECTED]"
+
+#           # Para módulo 00-bootstrap, usar backend local
+#           if [ "${{ env.MODULE_NUMBER }}" = "00" ]; then
+#             echo "🧱 Initializing Terraform (local backend for bootstrap)..."
+#             terraform init -input=false
+#           else
+#             echo "🧱 Initializing Terraform (no backend)..."
+#             terraform init -backend=false -input=false
+#           fi
+
+#           echo "🔍 Validating Terraform syntax..."
+#           terraform validate
+
+#           echo "📝 Checking Terraform formatting..."
+#           terraform fmt -check -recursive || echo "⚠️ Formatting issues found (non-critical for test)"
+
+#           # Detectar variáveis necessárias
+#           echo "📋 Detecting required variables..."
+#           VARIABLE_LIST=$(find . -name "variables.tf" -exec grep -h 'variable "' {} \; | sed 's/variable "\([^"]*\)".*/\1/' | sort | uniq)
+
+#           if [ -n "$VARIABLE_LIST" ]; then
+#             echo "📄 Variables declared in module:"
+#             echo "$VARIABLE_LIST"
+
+#             # Criar test.tfvars com valores apropriados
+#             echo "📝 Creating test.tfvars..."
+#             cat > test.tfvars << 'EOF'
+# # ===========================================
+# # Test variables for module: ${{ steps.validate-module.outputs.MODULE_NAME }}
+# # Environment: ${{ env.ENVIRONMENT }}
+# # Generated: $(date)
+# # ===========================================
+
+# EOF
+
+#             # Adicionar variáveis baseadas no tipo e nome
+#             echo "$VARIABLE_LIST" | while read var_name; do
+#               case $var_name in
+#                 # Provider authentication (deixar vazio - vem do ambiente)
+#                 subscription_id|client_id|client_secret|tenant_id)
+#                   echo "${var_name} = \"\"" >> test.tfvars
+#                   ;;
+
+#                 # Resource naming
+#                 resource_group_name)
+#                   echo "resource_group_name = \"rg-network-${{ env.ENVIRONMENT }}\"" >> test.tfvars
+#                   ;;
+#                 vnet_name)
+#                   echo "vnet_name = \"vnet-${{ env.ENVIRONMENT }}\"" >> test.tfvars
+#                   ;;
+
+#                 # Network addressing
+#                 vnet_address_space)
+#                   echo "vnet_address_space = [\"10.0.0.0/16\"]" >> test.tfvars
+#                   ;;
+#                 aks_subnet_address_prefixes)
+#                   echo "aks_subnet_address_prefixes = [\"10.0.1.0/24\"]" >> test.tfvars
+#                   ;;
+#                 database_subnet_address_prefixes)
+#                   echo "database_subnet_address_prefixes = [\"10.0.2.0/24\"]" >> test.tfvars
+#                   ;;
+#                 bastion_subnet_address_prefixes)
+#                   echo "bastion_subnet_address_prefixes = [\"10.0.3.0/24\"]" >> test.tfvars
+#                   ;;
+
+#                 # Common variables
+#                 location)
+#                   echo "location = \"eastus\"" >> test.tfvars
+#                   ;;
+#                 environment)
+#                   echo "environment = \"${{ env.ENVIRONMENT }}\"" >> test.tfvars
+#                   ;;
+#                 project_name)
+#                   echo "project_name = \"devops-technical-test\"" >> test.tfvars
+#                   ;;
+
+#                 # Tags
+#                 tags)
+#                   echo "tags = {" >> test.tfvars
+#                   echo "  Environment = \"${{ env.ENVIRONMENT }}\"" >> test.tfvars
+#                   echo "  Project     = \"devops-technical-test\"" >> test.tfvars
+#                   echo "  ManagedBy   = \"Terraform\"" >> test.tfvars
+#                   echo "  Team        = \"DevOps\"" >> test.tfvars
+#                   echo "}" >> test.tfvars
+#                   ;;
+
+#                 # Default para outras variáveis
+#                 *)
+#                   # Tentar inferir tipo
+#                   if echo "$var_name" | grep -q -E "(count|number|size|port)"; then
+#                     echo "${var_name} = 1" >> test.tfvars
+#                   elif echo "$var_name" | grep -q -E "(enable|enabled|disable|disabled|force)"; then
+#                     echo "${var_name} = false" >> test.tfvars
+#                   else
+#                     echo "${var_name} = \"test-value\"" >> test.tfvars
+#                   fi
+#                   ;;
+#               esac
+#             done
+
+#             echo "📄 Generated test.tfvars content:"
+#             cat test.tfvars
+#             echo ""
+#           else
+#             echo "⚠️ No variables.tf found or no variables declared"
+#             # Criar um test.tfvars mínimo
+#             cat > test.tfvars << EOF
+# environment = "${{ env.ENVIRONMENT }}"
+# location = "eastus"
+# EOF
+#           fi
+
+#           echo "📋 Running terraform plan..."
+#           terraform plan \
+#             -var-file="test.tfvars" \
+#             -compact-warnings \
+#             -input=false \
+#             -detailed-exitcode
+
+#           PLAN_EXIT_CODE=$?
+
+#           if [ $PLAN_EXIT_CODE -eq 0 ]; then
+#             echo "✅ No changes needed"
+#           elif [ $PLAN_EXIT_CODE -eq 2 ]; then
+#             echo "📝 Changes detected"
+#             echo ""
+#             echo "📊 Change Summary:"
+#             terraform show -json tfplan 2>/dev/null | jq -r '
+#               .resource_changes[] |
+#               "\(.type) \(.name): \(.change.actions | join(", "))"
+#             ' | head -20 || echo "Could not generate change summary"
+#           else
+#             echo "❌ Terraform plan failed with exit code: $PLAN_EXIT_CODE"
+#             exit 1
+#           fi
+
+#       - name: Restore Original Files
+#         if: always()
+#         run: |
+#           MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
+#           BACKUP_DIR="${{ env.BACKUP_DIR }}"
+
+#           echo "📁 Restoring original files..."
+
+#           if [ -d "$BACKUP_DIR" ]; then
+#             # 1. Restaurar backend.tf se estava desabilitado
+#             if [ -f "${MODULE_PATH}/backend.tf.disabled" ]; then
+#               mv "${MODULE_PATH}/backend.tf.disabled" "${MODULE_PATH}/backend.tf"
+#               echo "✅ Restored backend.tf"
+#             fi
+
+#             # 2. Restaurar outros arquivos .tf do backup
+#             for file in "$BACKUP_DIR"/*.tf; do
+#               if [ -f "$file" ]; then
+#                 filename=$(basename "$file")
+#                 cp "$file" "${MODULE_PATH}/${filename}"
+#                 echo "✅ Restored: $filename"
+#               fi
+#             done
+
+#             # 3. Remover backup
+#             rm -rf "$BACKUP_DIR"
+#             echo "✅ Backup directory removed"
+#           fi
+
+#       - name: Upload Plan as Artifact
+#         if: always()
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: terraform-plan-${{ steps.validate-module.outputs.MODULE_NAME }}-${{ github.run_id }}
+#           path: ${{ steps.validate-module.outputs.MODULE_PATH }}/tfplan
+#           retention-days: 7
+
+#       - name: Cleanup Test Files
+#         if: always()
+#         run: |
+#           cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
+
+#           # Remover arquivos temporários
+#           rm -f test.tfvars tfplan .terraform.lock.hcl 2>/dev/null || true
+
+#           # Remover diretório .terraform
+#           rm -rf .terraform 2>/dev/null || true
+
+#           echo "🧹 Test files cleaned up"
+
+name: Terraform Infrastructure TEST
 
 on:
   workflow_dispatch:
@@ -16,7 +390,6 @@ on:
         default: "01"
         type: choice
         options:
-          - "00"
           - "01"
           - "02"
           - "03"
@@ -35,339 +408,139 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.6.0"
 
-      - name: Validate Module Exists
-        id: validate-module
-        run: |
-          MODULE_DIR="infraestructure/${{ env.MODULE_NUMBER }}-*"
-          echo "🔍 Looking for module: $MODULE_DIR"
-
-          # Listar módulos disponíveis
-          echo "📦 Available modules:"
-          find infraestructure -maxdepth 1 -type d -name "[0-9]*" | sort
-
-          # Encontrar módulo específico
-          FOUND_DIR=$(find infraestructure -maxdepth 1 -type d -name "${{ env.MODULE_NUMBER }}-*" | head -1)
-
-          if [ -n "$FOUND_DIR" ] && [ -d "$FOUND_DIR" ]; then
-            MODULE_NAME=$(basename "$FOUND_DIR")
-            echo "✅ Module found: $MODULE_NAME"
-            echo "MODULE_NAME=$MODULE_NAME" >> $GITHUB_OUTPUT
-            echo "MODULE_PATH=$FOUND_DIR" >> $GITHUB_OUTPUT
-            
-            # Mostrar estrutura
-            echo "📁 Module structure:"
-            find "$FOUND_DIR" -name "*.tf" -o -name "*.tfvars" | sort
-          else
-            echo "❌ Module ${{ env.MODULE_NUMBER }}-* not found"
-            exit 1
-          fi
-
-      - name: Configure Provider Authentication
-        id: setup-auth
-        run: |
-          # Configurar autenticação Azure via Service Principal
-          echo "🔐 Setting up Azure authentication..."
-          
-          # Variáveis para o provider Terraform
-          echo "ARM_SUBSCRIPTION_ID=${{ secrets.ARM_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
-          echo "ARM_CLIENT_ID=${{ secrets.ARM_CLIENT_ID }}" >> $GITHUB_ENV
-          echo "ARM_CLIENT_SECRET=${{ secrets.ARM_CLIENT_SECRET }}" >> $GITHUB_ENV
-          echo "ARM_TENANT_ID=${{ secrets.ARM_TENANT_ID }}" >> $GITHUB_ENV
-          
-          # Log para debug (sem expor segredos completos)
-          echo "✅ Authentication configured:"
-          echo "   Subscription: ${ARM_SUBSCRIPTION_ID:0:8}..."
-          echo "   Client ID: ${ARM_CLIENT_ID:0:8}..."
-          echo "   Tenant ID: ${ARM_TENANT_ID:0:8}..."
-
-      - name: Create Temporary Terraform Files (NO BACKEND)
-        id: disable-backend
-        run: |
-          MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
-          
-          echo "📁 Module path: ${MODULE_PATH}"
-          
-          if [ ! -d "${MODULE_PATH}" ]; then
-            echo "❌ ERROR: Module directory does not exist: ${MODULE_PATH}"
-            exit 1
-          fi
-          
-          BACKUP_DIR="${MODULE_PATH}_backup_${GITHUB_RUN_ID}"
-          
-          # 1. Fazer backup dos arquivos originais
-          echo "💾 Creating backup in: ${BACKUP_DIR}"
-          mkdir -p "${BACKUP_DIR}"
-          cp -r "${MODULE_PATH}/"* "${BACKUP_DIR}/" 2>/dev/null || true
-          
-          # 2. Remover/renomear backend.tf se existir
-          if [ -f "${MODULE_PATH}/backend.tf" ]; then
-            mv "${MODULE_PATH}/backend.tf" "${MODULE_PATH}/backend.tf.disabled"
-            echo "⚠️ Temporarily disabled backend.tf for testing"
-          fi
-          
-          # 3. Remover blocos de backend de outros arquivos .tf
-          for file in "${MODULE_PATH}"/*.tf; do
-            if [ -f "$file" ]; then
-              # Verificar se tem backend block
-              if grep -q "backend \"" "$file"; then
-                echo "🔧 Removing backend block from: $(basename "$file")"
-                # Usar awk para remover bloco backend de forma segura
-                awk '
-                  /^terraform {/ { in_terraform=1 }
-                  in_terraform && /backend "/ { in_backend=1 }
-                  in_backend && /}/ { in_backend=0; next }
-                  !in_backend { print }
-                  /^}/ { in_terraform=0 }
-                ' "$file" > "${file}.temp" && mv "${file}.temp" "$file"
-              fi
-            fi
-          done
-          
-          echo "BACKUP_DIR=${BACKUP_DIR}" >> $GITHUB_ENV
-
-      - name: Replace Backend Placeholders (for modules with backend.tf)
-        if: env.MODULE_NUMBER != '00'
-        run: |
-          MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
-          
-          # Verificar se há backend.tf.disabled (que foi renomeado)
-          if [ -f "${MODULE_PATH}/backend.tf.disabled" ]; then
-            echo "🔧 Configurando backend placeholders..."
-            
-            # Usar valores consistentes com o bootstrap
-            # Baseado na sua resposta: Storage Account = "rg-terraform-state-dev"
-            # Mas isso parece ser o Resource Group. Precisamos do nome real do Storage Account
-            # Vou usar um padrão baseado no environment
-            TF_RG="rg-terraform-state-${{ env.ENVIRONMENT }}"
-            TF_SA="tfstate${{ env.ENVIRONMENT }}devops"
-            TF_CONTAINER="tfstate"
-            
-            echo "   Resource Group: ${TF_RG}"
-            echo "   Storage Account: ${TF_SA}"
-            echo "   Container: ${TF_CONTAINER}"
-            
-            # Aplicar substituições no arquivo desabilitado
-            sed -i \
-              -e "s|__TF_BACKEND_RESOURCE_GROUP__|${TF_RG}|g" \
-              -e "s|__TF_BACKEND_STORAGE_ACCOUNT__|${TF_SA}|g" \
-              -e "s|__TF_BACKEND_CONTAINER__|${TF_CONTAINER}|g" \
-              "${MODULE_PATH}/backend.tf.disabled"
-              
-            echo "✅ Backend placeholders substituídos"
-          else
-            echo "ℹ️ No backend.tf found in this module"
-          fi
-
-      - name: Run Terraform Commands (No Backend)
+      - name: Configure Azure Authentication
         env:
-          # Garantir que as variáveis do provider estão disponíveis
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-          
-          # Configurações do Terraform
-          TF_IN_AUTOMATION: "true"
-          TF_INPUT: "false"
-          TF_CLI_ARGS: "-no-color"
         run: |
-          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
-          
-          echo "🔐 Provider authentication status:"
-          echo "   ARM_SUBSCRIPTION_ID: ${ARM_SUBSCRIPTION_ID:0:12}..."
-          echo "   ARM_CLIENT_ID: ${ARM_CLIENT_ID:0:12}..."
-          echo "   ARM_TENANT_ID: ${ARM_TENANT_ID:0:12}..."
-          echo "   ARM_CLIENT_SECRET: [PROTECTED]"
-          
-          # Para módulo 00-bootstrap, usar backend local
-          if [ "${{ env.MODULE_NUMBER }}" = "00" ]; then
-            echo "🧱 Initializing Terraform (local backend for bootstrap)..."
-            terraform init -input=false
-          else
-            echo "🧱 Initializing Terraform (no backend)..."
-            terraform init -backend=false -input=false
-          fi
-          
-          echo "🔍 Validating Terraform syntax..."
-          terraform validate
-          
-          echo "📝 Checking Terraform formatting..."
-          terraform fmt -check -recursive || echo "⚠️ Formatting issues found (non-critical for test)"
-          
-          # Detectar variáveis necessárias
-          echo "📋 Detecting required variables..."
-          VARIABLE_LIST=$(find . -name "variables.tf" -exec grep -h 'variable "' {} \; | sed 's/variable "\([^"]*\)".*/\1/' | sort | uniq)
-          
-          if [ -n "$VARIABLE_LIST" ]; then
-            echo "📄 Variables declared in module:"
-            echo "$VARIABLE_LIST"
-            
-            # Criar test.tfvars com valores apropriados
-            echo "📝 Creating test.tfvars..."
-            cat > test.tfvars << 'EOF'
-# ===========================================
-# Test variables for module: ${{ steps.validate-module.outputs.MODULE_NAME }}
-# Environment: ${{ env.ENVIRONMENT }}
-# Generated: $(date)
-# ===========================================
+          echo "ARM_SUBSCRIPTION_ID=$ARM_SUBSCRIPTION_ID" >> $GITHUB_ENV
+          echo "ARM_CLIENT_ID=$ARM_CLIENT_ID" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$ARM_CLIENT_SECRET" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$ARM_TENANT_ID" >> $GITHUB_ENV
 
-EOF
-            
-            # Adicionar variáveis baseadas no tipo e nome
-            echo "$VARIABLE_LIST" | while read var_name; do
-              case $var_name in
-                # Provider authentication (deixar vazio - vem do ambiente)
-                subscription_id|client_id|client_secret|tenant_id)
-                  echo "${var_name} = \"\"" >> test.tfvars
-                  ;;
-                
-                # Resource naming
-                resource_group_name)
-                  echo "resource_group_name = \"rg-network-${{ env.ENVIRONMENT }}\"" >> test.tfvars
-                  ;;
-                vnet_name)
-                  echo "vnet_name = \"vnet-${{ env.ENVIRONMENT }}\"" >> test.tfvars
-                  ;;
-                
-                # Network addressing
-                vnet_address_space)
-                  echo "vnet_address_space = [\"10.0.0.0/16\"]" >> test.tfvars
-                  ;;
-                aks_subnet_address_prefixes)
-                  echo "aks_subnet_address_prefixes = [\"10.0.1.0/24\"]" >> test.tfvars
-                  ;;
-                database_subnet_address_prefixes)
-                  echo "database_subnet_address_prefixes = [\"10.0.2.0/24\"]" >> test.tfvars
-                  ;;
-                bastion_subnet_address_prefixes)
-                  echo "bastion_subnet_address_prefixes = [\"10.0.3.0/24\"]" >> test.tfvars
-                  ;;
-                
-                # Common variables
-                location)
-                  echo "location = \"eastus\"" >> test.tfvars
-                  ;;
-                environment)
-                  echo "environment = \"${{ env.ENVIRONMENT }}\"" >> test.tfvars
-                  ;;
-                project_name)
-                  echo "project_name = \"devops-technical-test\"" >> test.tfvars
-                  ;;
-                
-                # Tags
-                tags)
-                  echo "tags = {" >> test.tfvars
-                  echo "  Environment = \"${{ env.ENVIRONMENT }}\"" >> test.tfvars
-                  echo "  Project     = \"devops-technical-test\"" >> test.tfvars
-                  echo "  ManagedBy   = \"Terraform\"" >> test.tfvars
-                  echo "  Team        = \"DevOps\"" >> test.tfvars
-                  echo "}" >> test.tfvars
-                  ;;
-                
-                # Default para outras variáveis
-                *)
-                  # Tentar inferir tipo
-                  if echo "$var_name" | grep -q -E "(count|number|size|port)"; then
-                    echo "${var_name} = 1" >> test.tfvars
-                  elif echo "$var_name" | grep -q -E "(enable|enabled|disable|disabled|force)"; then
-                    echo "${var_name} = false" >> test.tfvars
-                  else
-                    echo "${var_name} = \"test-value\"" >> test.tfvars
-                  fi
-                  ;;
-              esac
-            done
-            
-            echo "📄 Generated test.tfvars content:"
-            cat test.tfvars
-            echo ""
-          else
-            echo "⚠️ No variables.tf found or no variables declared"
-            # Criar um test.tfvars mínimo
-            cat > test.tfvars << EOF
-environment = "${{ env.ENVIRONMENT }}"
-location = "eastus"
-EOF
-          fi
-          
-          echo "📋 Running terraform plan..."
-          terraform plan \
-            -var-file="test.tfvars" \
-            -compact-warnings \
-            -input=false \
-            -detailed-exitcode
-          
-          PLAN_EXIT_CODE=$?
-          
-          if [ $PLAN_EXIT_CODE -eq 0 ]; then
-            echo "✅ No changes needed"
-          elif [ $PLAN_EXIT_CODE -eq 2 ]; then
-            echo "📝 Changes detected"
-            echo ""
-            echo "📊 Change Summary:"
-            terraform show -json tfplan 2>/dev/null | jq -r '
-              .resource_changes[] | 
-              "\(.type) \(.name): \(.change.actions | join(", "))"
-            ' | head -20 || echo "Could not generate change summary"
-          else
-            echo "❌ Terraform plan failed with exit code: $PLAN_EXIT_CODE"
+      - name: Find Module Directory
+        id: find-module
+        run: |
+          MODULE_DIR=$(find infraestructure -maxdepth 1 -type d -name "$MODULE_NUMBER-*" | head -1)
+
+          if [ -z "$MODULE_DIR" ] || [ ! -d "$MODULE_DIR" ]; then
+            echo "Module $MODULE_NUMBER-* not found"
             exit 1
           fi
+
+          MODULE_NAME=$(basename "$MODULE_DIR")
+          echo "MODULE_NAME=$MODULE_NAME" >> $GITHUB_OUTPUT
+          echo "MODULE_PATH=$MODULE_DIR" >> $GITHUB_OUTPUT
+          echo "Found module: $MODULE_NAME at $MODULE_DIR"
+
+      - name: Prepare Module for Testing
+        run: |
+          cd "${{ steps.find-module.outputs.MODULE_PATH }}"
+
+          if [ -f "backend.tf" ]; then
+            mv backend.tf backend.tf.backup
+            echo "Disabled backend.tf"
+          fi
+
+          echo "BACKUP_FILE=backend.tf.backup" >> $GITHUB_ENV
+
+      - name: Initialize Terraform
+        run: |
+          cd "${{ steps.find-module.outputs.MODULE_PATH }}"
+          terraform init -backend=false -input=false
+
+      - name: Create Test Variables File
+        run: |
+          cd "${{ steps.find-module.outputs.MODULE_PATH }}"
+
+          cat > terraform.tfvars << EOF
+          resource_group_name = "rg-network-$ENVIRONMENT"
+          vnet_name = "vnet-$ENVIRONMENT"
+          vnet_address_space = ["10.0.0.0/16"]
+          aks_subnet_address_prefixes = ["10.0.1.0/24"]
+          database_subnet_address_prefixes = ["10.0.2.0/24"]
+          bastion_subnet_address_prefixes = ["10.0.3.0/24"]
+          location = "eastus"
+          environment = "$ENVIRONMENT"
+          project_name = "devops-test"
+          tags = {
+            Environment = "$ENVIRONMENT"
+            Project = "devops-test"
+            ManagedBy = "Terraform"
+          }
+          subscription_id = "$ARM_SUBSCRIPTION_ID"
+          client_id = "$ARM_CLIENT_ID"
+          client_secret = "$ARM_CLIENT_SECRET"
+          tenant_id = "$ARM_TENANT_ID"
+          EOF
+
+          echo "Created terraform.tfvars:"
+          cat terraform.tfvars
+
+      - name: Run Terraform Validate
+        run: |
+          cd "${{ steps.find-module.outputs.MODULE_PATH }}"
+          terraform validate
+
+      - name: Run Terraform Format Check
+        run: |
+          cd "${{ steps.find-module.outputs.MODULE_PATH }}"
+          terraform fmt -check -recursive
+
+      - name: Run Terraform Plan
+        id: terraform-plan
+        run: |
+          cd "${{ steps.find-module.outputs.MODULE_PATH }}"
+
+          terraform plan \
+            -var-file="terraform.tfvars" \
+            -compact-warnings \
+            -input=false \
+            -detailed-exitcode \
+            -out=tfplan
+
+          PLAN_EXIT_CODE=$?
+
+          if [ $PLAN_EXIT_CODE -eq 0 ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          elif [ $PLAN_EXIT_CODE -eq 2 ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "Terraform plan failed"
+            exit 1
+          fi
+
+      - name: Show Plan Summary
+        if: steps.terraform-plan.outputs.has_changes == 'true'
+        run: |
+          cd "${{ steps.find-module.outputs.MODULE_PATH }}"
+          terraform show -json tfplan | jq -r '.resource_changes[] | "\(.type) \(.name): \(.change.actions | join(", "))"' | head -10
 
       - name: Restore Original Files
         if: always()
         run: |
-          MODULE_PATH="${{ steps.validate-module.outputs.MODULE_PATH }}"
-          BACKUP_DIR="${{ env.BACKUP_DIR }}"
-          
-          echo "📁 Restoring original files..."
-          
-          if [ -d "$BACKUP_DIR" ]; then
-            # 1. Restaurar backend.tf se estava desabilitado
-            if [ -f "${MODULE_PATH}/backend.tf.disabled" ]; then
-              mv "${MODULE_PATH}/backend.tf.disabled" "${MODULE_PATH}/backend.tf"
-              echo "✅ Restored backend.tf"
-            fi
-            
-            # 2. Restaurar outros arquivos .tf do backup
-            for file in "$BACKUP_DIR"/*.tf; do
-              if [ -f "$file" ]; then
-                filename=$(basename "$file")
-                cp "$file" "${MODULE_PATH}/${filename}"
-                echo "✅ Restored: $filename"
-              fi
-            done
-            
-            # 3. Remover backup
-            rm -rf "$BACKUP_DIR"
-            echo "✅ Backup directory removed"
+          cd "${{ steps.find-module.outputs.MODULE_PATH }}"
+
+          if [ -f "$BACKUP_FILE" ]; then
+            mv "$BACKUP_FILE" backend.tf
+            echo "Restored backend.tf"
           fi
 
-      - name: Upload Plan as Artifact
+          rm -f terraform.tfvars tfplan 2>/dev/null || true
+          rm -rf .terraform 2>/dev/null || true
+
+      - name: Upload Plan Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-${{ steps.validate-module.outputs.MODULE_NAME }}-${{ github.run_id }}
-          path: ${{ steps.validate-module.outputs.MODULE_PATH }}/tfplan
-          retention-days: 7
-
-      - name: Cleanup Test Files
-        if: always()
-        run: |
-          cd "${{ steps.validate-module.outputs.MODULE_PATH }}"
-          
-          # Remover arquivos temporários
-          rm -f test.tfvars tfplan .terraform.lock.hcl 2>/dev/null || true
-          
-          # Remover diretório .terraform
-          rm -rf .terraform 2>/dev/null || true
-          
-          echo "🧹 Test files cleaned up"
+          name: terraform-plan-${{ steps.find-module.outputs.MODULE_NAME }}
+          path: ${{ steps.find-module.outputs.MODULE_PATH }}/tfplan
+          retention-days: 1
