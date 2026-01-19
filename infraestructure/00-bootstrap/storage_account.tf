@@ -1,15 +1,8 @@
-resource "random_string" "devops_suffix" {
-  length  = 8
-  special = false
-  upper   = false
-  numeric = true
-}
-
 resource "azurerm_storage_account" "devops" {
   # Nome deve ser único globalmente, max 24 chars, somente lowercase
   name = lower(
     substr(
-      replace("${var.storage_account_prefix}${var.environment}${random_string.devops_suffix.result}", "-", ""),
+      replace("${var.storage_account_prefix}${var.environment}", "-", ""),
       0, 24
     )
   )

@@ -1,0 +1,5 @@
+environment            = "dev"
+location               = "eastus"
+storage_account_prefix = "tfstate"
+storage_container_name = "tfstate"
+resource_group_name    = "rg-terraform-state"
