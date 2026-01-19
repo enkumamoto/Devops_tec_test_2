@@ -113,3 +113,51 @@ variable "azure_tenant_id" {
   type        = string
   default     = ""
 }
+
+variable "aks_subnet_id" {
+  description = "ID da subnet para o AKS"
+  type        = string
+  default     = "" # Pode ficar vazio para teste
+}
+
+variable "key_vault_name" {
+  description = "Nome do Azure Key Vault"
+  type        = string
+  default     = ""
+}
+
+variable "key_vault_sku" {
+  description = "SKU do Key Vault (standard ou premium)"
+  type        = string
+  default     = "standard"
+}
+
+variable "enabled_for_disk_encryption" {
+  description = "Habilitar para disk encryption"
+  type        = bool
+  default     = false
+}
+
+variable "enabled_for_deployment" {
+  description = "Habilitar para deployment"
+  type        = bool
+  default     = false
+}
+
+variable "enabled_for_template_deployment" {
+  description = "Habilitar para template deployment"
+  type        = bool
+  default     = false
+}
+
+variable "soft_delete_retention_days" {
+  description = "Dias de retenção para soft delete"
+  type        = number
+  default     = 7
+}
+
+variable "purge_protection_enabled" {
+  description = "Habilitar purge protection"
+  type        = bool
+  default     = false
+}
