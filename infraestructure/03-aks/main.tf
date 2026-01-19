@@ -5,8 +5,6 @@ resource "azurerm_resource_group" "aks" {
   tags = merge(var.tags)
 
   lifecycle {
-    prevent_destroy = var.environment == "prod" ? true : false
-
     create_before_destroy = true
   }
 }
