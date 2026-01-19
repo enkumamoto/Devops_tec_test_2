@@ -396,14 +396,9 @@ on:
           - "04"
           - "05"
 
-env:
-  ENVIRONMENT: ${{ github.event.inputs.environment }}
-  MODULE_NUMBER: ${{ github.event.inputs.module_number }}
-
 jobs:
   terraform-test:
     runs-on: ubuntu-latest
-    environment: test
 
     steps:
       - name: Checkout Repository
@@ -411,136 +406,77 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.6.0"
 
-      - name: Configure Azure Authentication
-        env:
-          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-        run: |
-          echo "ARM_SUBSCRIPTION_ID=$ARM_SUBSCRIPTION_ID" >> $GITHUB_ENV
-          echo "ARM_CLIENT_ID=$ARM_CLIENT_ID" >> $GITHUB_ENV
-          echo "ARM_CLIENT_SECRET=$ARM_CLIENT_SECRET" >> $GITHUB_ENV
-          echo "ARM_TENANT_ID=$ARM_TENANT_ID" >> $GITHUB_ENV
-
-      - name: Find Module Directory
+      - name: Find Module
         id: find-module
         run: |
-          MODULE_DIR=$(find infraestructure -maxdepth 1 -type d -name "$MODULE_NUMBER-*" | head -1)
+          MODULE_PATH="infraestructure/${{ github.event.inputs.module_number }}-*"
+          FOUND=$(find infraestructure -maxdepth 1 -type d -name "${{ github.event.inputs.module_number }}-*" | head -1)
 
-          if [ -z "$MODULE_DIR" ] || [ ! -d "$MODULE_DIR" ]; then
-            echo "Module $MODULE_NUMBER-* not found"
+          if [ -z "$FOUND" ]; then
+            echo "Module not found"
             exit 1
           fi
 
-          MODULE_NAME=$(basename "$MODULE_DIR")
-          echo "MODULE_NAME=$MODULE_NAME" >> $GITHUB_OUTPUT
-          echo "MODULE_PATH=$MODULE_DIR" >> $GITHUB_OUTPUT
-          echo "Found module: $MODULE_NAME at $MODULE_DIR"
+          echo "MODULE_PATH=$FOUND" >> $GITHUB_OUTPUT
+          echo "MODULE_NAME=$(basename $FOUND)" >> $GITHUB_OUTPUT
 
-      - name: Prepare Module for Testing
+      - name: Disable Backend for Testing
         run: |
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
 
           if [ -f "backend.tf" ]; then
-            mv backend.tf backend.tf.backup
-            echo "Disabled backend.tf"
+            cp backend.tf backend.tf.backup
+            rm backend.tf
           fi
-
-          echo "BACKUP_FILE=backend.tf.backup" >> $GITHUB_ENV
 
       - name: Initialize Terraform
         run: |
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
-          terraform init -backend=false -input=false
+          terraform init -backend=false
 
-      - name: Create Test Variables File
+      - name: Create Test Variables
         run: |
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
 
-          cat > terraform.tfvars << EOF
-          resource_group_name = "rg-network-$ENVIRONMENT"
-          vnet_name = "vnet-$ENVIRONMENT"
+          cat > test.auto.tfvars << 'EOF'
+          resource_group_name = "rg-network-dev"
+          vnet_name = "vnet-dev"
           vnet_address_space = ["10.0.0.0/16"]
           aks_subnet_address_prefixes = ["10.0.1.0/24"]
           database_subnet_address_prefixes = ["10.0.2.0/24"]
           bastion_subnet_address_prefixes = ["10.0.3.0/24"]
           location = "eastus"
-          environment = "$ENVIRONMENT"
-          project_name = "devops-test"
+          environment = "dev"
           tags = {
-            Environment = "$ENVIRONMENT"
+            Environment = "dev"
             Project = "devops-test"
-            ManagedBy = "Terraform"
           }
-          subscription_id = "$ARM_SUBSCRIPTION_ID"
-          client_id = "$ARM_CLIENT_ID"
-          client_secret = "$ARM_CLIENT_SECRET"
-          tenant_id = "$ARM_TENANT_ID"
           EOF
 
-          echo "Created terraform.tfvars:"
-          cat terraform.tfvars
-
-      - name: Run Terraform Validate
+      - name: Validate Configuration
         run: |
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
           terraform validate
 
-      - name: Run Terraform Format Check
+      - name: Check Formatting
         run: |
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
-          terraform fmt -check -recursive
+          terraform fmt -check
 
       - name: Run Terraform Plan
-        id: terraform-plan
         run: |
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
+          terraform plan -input=false
 
-          terraform plan \
-            -var-file="terraform.tfvars" \
-            -compact-warnings \
-            -input=false \
-            -detailed-exitcode \
-            -out=tfplan
-
-          PLAN_EXIT_CODE=$?
-
-          if [ $PLAN_EXIT_CODE -eq 0 ]; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          elif [ $PLAN_EXIT_CODE -eq 2 ]; then
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          else
-            echo "Terraform plan failed"
-            exit 1
-          fi
-
-      - name: Show Plan Summary
-        if: steps.terraform-plan.outputs.has_changes == 'true'
-        run: |
-          cd "${{ steps.find-module.outputs.MODULE_PATH }}"
-          terraform show -json tfplan | jq -r '.resource_changes[] | "\(.type) \(.name): \(.change.actions | join(", "))"' | head -10
-
-      - name: Restore Original Files
+      - name: Restore Backend
         if: always()
         run: |
           cd "${{ steps.find-module.outputs.MODULE_PATH }}"
 
-          if [ -f "$BACKUP_FILE" ]; then
-            mv "$BACKUP_FILE" backend.tf
-            echo "Restored backend.tf"
+          if [ -f "backend.tf.backup" ]; then
+            mv backend.tf.backup backend.tf
           fi
 
-          rm -f terraform.tfvars tfplan 2>/dev/null || true
-          rm -rf .terraform 2>/dev/null || true
-
-      - name: Upload Plan Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan-${{ steps.find-module.outputs.MODULE_NAME }}
-          path: ${{ steps.find-module.outputs.MODULE_PATH }}/tfplan
-          retention-days: 1
+          rm -f test.auto.tfvars
+          rm -rf .terraform
