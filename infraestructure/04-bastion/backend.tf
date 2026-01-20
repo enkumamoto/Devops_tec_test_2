@@ -6,5 +6,6 @@ terraform {
     storage_account_name = "__TF_BACKEND_STORAGE_ACCOUNT__"
     container_name       = "__TF_BACKEND_CONTAINER__"
     key                  = "bastion.tfstate"
+    use_azuread_auth     = true
   }
 }
