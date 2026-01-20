@@ -1,5 +1,5 @@
 resource "azurerm_network_security_group" "bastion" {
-  name                = "nsgbastion${var.environment}"
+  name                = "nsg-bastion-${var.environment}" # Adicionei hífens para consistência (opcional, mas recomendado)
   location            = var.location
   resource_group_name = azurerm_resource_group.bastion.name
 
@@ -7,7 +7,7 @@ resource "azurerm_network_security_group" "bastion" {
     for_each = var.allowed_source_ips
 
     content {
-      name                       = "Allow-SSH-${replace(security_rule.value, ".", "-")}"
+      name                       = "Allow-SSH-${replace(replace(security_rule.value, ".", "-"), "/", "-")}" # Correção: substitui '.' e '/' por '-'
       priority                   = 100 + index(var.allowed_source_ips, security_rule.value)
       direction                  = "Inbound"
       access                     = "Allow"
