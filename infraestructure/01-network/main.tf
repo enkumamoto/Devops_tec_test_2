@@ -4,7 +4,7 @@ resource "azurerm_resource_group" "network" {
   location = var.location
 
   tags = merge(var.tags, {
-    Environment = var.environment
+    environment = var.environment
     ManagedBy   = "Terraform"
     Module      = "01-network"
     Component   = "networking"

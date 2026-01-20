@@ -1,5 +1,5 @@
 environment         = "dev"
-project             = "devopstest"
+project             = "eijidevops"
 location            = "eastus"
 resource_group_name = "rg-acr-dev"
 acr_sku             = "Standard"
