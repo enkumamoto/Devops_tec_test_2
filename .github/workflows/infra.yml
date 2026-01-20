@@ -215,7 +215,7 @@ jobs:
   # =====================================================
   database:
     runs-on: ubuntu-latest
-    needs: network
+    needs: [setup, network] # Adicione 'setup' para acessar sas_token
 
     steps:
       - uses: actions/checkout@v4
@@ -235,12 +235,60 @@ jobs:
 
       - name: Terraform Plan - Database
         working-directory: infraestructure/05-database
-        run: terraform plan -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -input=false
+        run: |
+          terraform plan \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="location=eastus" \
+            -var="environment=dev" \
+            -var="resource_group_name=rg-database-dev" \
+            -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
+            -var="database_subnet_id=${{ needs.network.outputs.database_subnet_id }}" \
+            -var="db_name=psql-devops" \
+            -var="postgres_version=15" \
+            -var="sku_name=B_Standard_B1ms" \
+            -var="storage_mb=32768" \
+            -var="backup_retention_days=7" \
+            -var="geo_redundant_backup_enabled=false" \
+            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
+            -var="charset=UTF8" \
+            -var="collation=en_US.utf8" \
+            -var="zone=1" \
+            -var="high_availability_mode=Disabled" \
+            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -input=false
 
       - name: Terraform Apply - Database
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/05-database
-        run: terraform apply -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -auto-approve -input=false
+        run: |
+          terraform apply \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="location=eastus" \
+            -var="environment=dev" \
+            -var="resource_group_name=rg-database-dev" \
+            -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
+            -var="database_subnet_id=${{ needs.network.outputs.database_subnet_id }}" \
+            -var="db_name=psql-devops" \
+            -var="postgres_version=15" \
+            -var="sku_name=B_Standard_B1ms" \
+            -var="storage_mb=32768" \
+            -var="backup_retention_days=7" \
+            -var="geo_redundant_backup_enabled=false" \
+            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
+            -var="charset=UTF8" \
+            -var="collation=en_US.utf8" \
+            -var="zone=1" \
+            -var="high_availability_mode=Disabled" \
+            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+          -auto-approve -input=false
 
   # =====================================================
   # 6. BASTION

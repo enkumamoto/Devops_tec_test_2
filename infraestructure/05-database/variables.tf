@@ -112,3 +112,24 @@ variable "tags" {
   description = "Additional tags for database resources"
   type        = map(string)
 }
+
+variable "tf_backend_resource_group" {
+  description = "Backend Resource Group"
+  type        = string
+}
+
+variable "tf_backend_storage_account" {
+  description = "Backend Storage Account"
+  type        = string
+}
+
+variable "tf_backend_container" {
+  description = "Backend Container"
+  type        = string
+}
+
+variable "tf_backend_sas_token" {
+  description = "SAS Token for backend"
+  type        = string
+  sensitive   = true
+}

@@ -5,6 +5,6 @@ resource "azurerm_resource_group" "db" {
   tags = var.tags
 
   lifecycle {
-    prevent_destroy = var.environment == "prod"
+    prevent_destroy = true
   }
 }
