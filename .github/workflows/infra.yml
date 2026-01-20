@@ -245,8 +245,8 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=bastion.tfstate" \
-            -reconfigure \
-            -input=false
+            -input=false \
+            -reconfigure
 
       - name: Terraform Plan - Bastion
         working-directory: infraestructure/04-bastion
