@@ -24,6 +24,7 @@ on:
 env:
   ENVIRONMENT: ${{ github.event.inputs.environment }}
   TF_ACTION: ${{ github.event.inputs.tf_action }}
+
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
@@ -31,39 +32,68 @@ env:
 
 jobs:
   # =========================
-  # 1. OBTER BACKEND DO BOOTSTRAP
+  # 1. BOOTSTRAP DO BACKEND (AZ CLI)
   # =========================
   setup:
     runs-on: ubuntu-latest
     outputs:
-      tf_rg: ${{ steps.get-backend.outputs.tf_rg }}
-      tf_sa: ${{ steps.get-backend.outputs.tf_sa }}
-      tf_container: ${{ steps.get-backend.outputs.tf_container }}
+      tf_rg: ${{ steps.backend.outputs.tf_rg }}
+      tf_sa: ${{ steps.backend.outputs.tf_sa }}
+      tf_container: ${{ steps.backend.outputs.tf_container }}
 
     steps:
-      - name: Get Bootstrap Backend Info
-        id: get-backend
+      - name: Azure Login
         run: |
-          # Para o primeiro deploy, obtenha das secrets ou variáveis
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
+
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Create Terraform Backend (RG + SA + Container)
+        id: backend
+        run: |
           ENV="${{ github.event.inputs.environment }}"
 
-          if [ -n "${{ secrets.TF_STATE_RESOURCE_GROUP }}" ]; then
-            echo "Using secrets for backend..."
-            echo "tf_rg=${{ secrets.TF_STATE_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
-            echo "tf_sa=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
-            echo "tf_container=${{ secrets.TF_STATE_CONTAINER }}" >> $GITHUB_OUTPUT
-          else
-            # Se não houver secrets, use valores padrão baseados no ambiente
-            echo "Using default backend names..."
-            echo "tf_rg=rg-terraform-state-$ENV" >> $GITHUB_OUTPUT
-            echo "tf_sa=tfstate${ENV}devops" >> $GITHUB_OUTPUT
-            echo "tf_container=tfstate" >> $GITHUB_OUTPUT
-          fi
+          RG="rg-terraform-state-${ENV}"
+          SA="tfstate${ENV}devops"
+          CONTAINER="tfstate"
+          LOCATION="eastus"
 
-          echo "Backend configuration:"
-          echo "RG: ${{ steps.get-backend.outputs.tf_rg }}"
-          echo "SA: ${{ steps.get-backend.outputs.tf_sa }}"
-          echo "Container: ${{ steps.get-backend.outputs.tf_container }}"
+          echo "🔧 Creating backend resources"
+          echo "RG=$RG | SA=$SA | Container=$CONTAINER"
+
+          az group create \
+            --name "$RG" \
+            --location "$LOCATION" \
+            --tags Environment="$ENV" ManagedBy=GitHubActions Purpose=TerraformState
+
+          az storage account create \
+            --name "$SA" \
+            --resource-group "$RG" \
+            --location "$LOCATION" \
+            --sku Standard_LRS \
+            --kind StorageV2 \
+            --https-only true \
+            --allow-blob-public-access false \
+            --min-tls-version TLS1_2
+
+          SA_KEY=$(az storage account keys list \
+            --resource-group "$RG" \
+            --account-name "$SA" \
+            --query "[0].value" -o tsv)
+
+          az storage container create \
+            --name "$CONTAINER" \
+            --account-name "$SA" \
+            --account-key "$SA_KEY" \
+            --public-access off
+
+          echo "tf_rg=$RG" >> $GITHUB_OUTPUT
+          echo "tf_sa=$SA" >> $GITHUB_OUTPUT
+          echo "tf_container=$CONTAINER" >> $GITHUB_OUTPUT
 
   # =========================
   # 2. NETWORK
@@ -74,54 +104,34 @@ jobs:
     environment: ${{ github.event.inputs.environment }}
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.6.0"
 
-      - name: Azure Login
-        run: |
-          az login \
-            --service-principal \
-            --username "${{ secrets.ARM_CLIENT_ID }}" \
-            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.ARM_TENANT_ID }}"
-
-          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
-          echo "✅ Azure login successful"
-
       - name: Terraform Init - Network
+        working-directory: infraestructure/01-network
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
-            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
-            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}" \
-            -backend-config="key=network.tfstate"
-
-            -input=false \
-            -reconfigure
+            -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
+            -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
+            -backend-config="key=network.tfstate" \
+            -reconfigure \
+            -input=false
 
       - name: Terraform Plan - Network
         working-directory: infraestructure/01-network
-        run: |
-          terraform plan \
-            -var="azure_subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            -var="azure_client_id=${{ secrets.AZURE_CLIENT_ID }}" \
-            -var="azure_client_secret=${{ secrets.AZURE_CLIENT_SECRET }}" \
-            -var="azure_tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
-            -out=tfplan
-            -input=false
+        run: terraform plan -input=false
 
       - name: Terraform Apply - Network
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/01-network
-        run: terraform apply tfplan -input=false
+        run: terraform apply -auto-approve -input=false
 
   # =========================
-  # 3. ACR - Segundo módulo (depende apenas do backend)
+  # 3. ACR
   # =========================
   acr:
     runs-on: ubuntu-latest
@@ -129,21 +139,8 @@ jobs:
     environment: ${{ github.event.inputs.environment }}
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Azure Login
-        run: |
-          az login \
-            --service-principal \
-            --username "${{ secrets.ARM_CLIENT_ID }}" \
-            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.ARM_TENANT_ID }}"
-
-          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init - ACR
         working-directory: infraestructure/02-acr
@@ -153,25 +150,20 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=acr.tfstate" \
-            -input=false \
-            -reconfigure
+            -reconfigure \
+            -input=false
 
       - name: Terraform Plan - ACR
         working-directory: infraestructure/02-acr
-        run: |
-          terraform plan \
-            -var="environment=${{ github.event.inputs.environment }}" \
-            -var="location=eastus" \
-            -out=tfplan \
-            -input=false
+        run: terraform plan -input=false
 
       - name: Terraform Apply - ACR
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/02-acr
-        run: terraform apply tfplan -input=false
+        run: terraform apply -auto-approve -input=false
 
   # =========================
-  # 4. AKS - Terceiro módulo (depende de network e acr)
+  # 4. AKS
   # =========================
   aks:
     runs-on: ubuntu-latest
@@ -179,21 +171,8 @@ jobs:
     environment: ${{ github.event.inputs.environment }}
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Azure Login
-        run: |
-          az login \
-            --service-principal \
-            --username "${{ secrets.ARM_CLIENT_ID }}" \
-            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.ARM_TENANT_ID }}"
-
-          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init - AKS
         working-directory: infraestructure/03-aks
@@ -203,25 +182,20 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=aks.tfstate" \
-            -input=false \
-            -reconfigure
+            -reconfigure \
+            -input=false
 
       - name: Terraform Plan - AKS
         working-directory: infraestructure/03-aks
-        run: |
-          terraform plan \
-            -var="environment=${{ github.event.inputs.environment }}" \
-            -var="location=eastus" \
-            -out=tfplan \
-            -input=false
+        run: terraform plan -input=false
 
       - name: Terraform Apply - AKS
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/03-aks
-        run: terraform apply tfplan -input=false
+        run: terraform apply -auto-approve -input=false
 
   # =========================
-  # 5. DATABASE - Quarto módulo (depende de network)
+  # 5. DATABASE
   # =========================
   database:
     runs-on: ubuntu-latest
@@ -229,21 +203,8 @@ jobs:
     environment: ${{ github.event.inputs.environment }}
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Azure Login
-        run: |
-          az login \
-            --service-principal \
-            --username "${{ secrets.ARM_CLIENT_ID }}" \
-            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.ARM_TENANT_ID }}"
-
-          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init - Database
         working-directory: infraestructure/05-database
@@ -253,25 +214,20 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=database.tfstate" \
-            -input=false \
-            -reconfigure
+            -reconfigure \
+            -input=false
 
       - name: Terraform Plan - Database
         working-directory: infraestructure/05-database
-        run: |
-          terraform plan \
-            -var="environment=${{ github.event.inputs.environment }}" \
-            -var="location=eastus" \
-            -out=tfplan \
-            -input=false
+        run: terraform plan -input=false
 
       - name: Terraform Apply - Database
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/05-database
-        run: terraform apply tfplan -input=false
+        run: terraform apply -auto-approve -input=false
 
   # =========================
-  # 6. BASTION - Quinto módulo (depende de network)
+  # 6. BASTION
   # =========================
   bastion:
     runs-on: ubuntu-latest
@@ -279,21 +235,8 @@ jobs:
     environment: ${{ github.event.inputs.environment }}
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Azure Login
-        run: |
-          az login \
-            --service-principal \
-            --username "${{ secrets.ARM_CLIENT_ID }}" \
-            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.ARM_TENANT_ID }}"
-
-          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init - Bastion
         working-directory: infraestructure/04-bastion
@@ -303,22 +246,17 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=bastion.tfstate" \
-            -input=false \
-            -reconfigure
+            -reconfigure \
+            -input=false
 
       - name: Terraform Plan - Bastion
         working-directory: infraestructure/04-bastion
-        run: |
-          terraform plan \
-            -var="environment=${{ github.event.inputs.environment }}" \
-            -var="location=eastus" \
-            -out=tfplan \
-            -input=false
+        run: terraform plan -input=false
 
       - name: Terraform Apply - Bastion
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/04-bastion
-        run: terraform apply tfplan -input=false
+        run: terraform apply -auto-approve -input=false
 
   # =========================
   # 7. VALIDATE & SAVE OUTPUTS
