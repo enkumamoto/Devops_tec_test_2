@@ -24,15 +24,16 @@ on:
 env:
   ENVIRONMENT: ${{ github.event.inputs.environment }}
   TF_ACTION: ${{ github.event.inputs.tf_action }}
+
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
 jobs:
-  # =========================
-  # 1. BOOTSTRAP DO BACKEND (AZ CLI)
-  # =========================
+  # =====================================================
+  # 1. BACKEND BOOTSTRAP (Storage Account + Key)
+  # =====================================================
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -41,7 +42,7 @@ jobs:
       tf_container: ${{ steps.backend.outputs.tf_container }}
 
     steps:
-      - name: Azure Login
+      - name: Azure Login (Service Principal)
         run: |
           az login \
             --service-principal \
@@ -51,7 +52,7 @@ jobs:
 
           az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
-      - name: Create RG + SA + Container with AZ CLI
+      - name: Create RG + Storage Account + Container
         id: backend
         run: |
           ENV="${{ github.event.inputs.environment }}"
@@ -61,13 +62,9 @@ jobs:
           CONTAINER="tfstate"
           LOCATION="eastus"
 
-          echo "🔧 Creating backend resources"
-          echo "RG=$RG | SA=$SA | Container=$CONTAINER"
-
           az group create \
             --name "$RG" \
-            --location "$LOCATION" \
-            --tags Environment="$ENV" ManagedBy=GitHubActions Purpose=TerraformState
+            --location "$LOCATION"
 
           az storage account create \
             --name "$SA" \
@@ -76,13 +73,15 @@ jobs:
             --sku Standard_LRS \
             --kind StorageV2 \
             --https-only true \
-            --allow-blob-public-access false \
-            --min-tls-version TLS1_2
+            --allow-blob-public-access false
 
           SA_KEY=$(az storage account keys list \
             --resource-group "$RG" \
             --account-name "$SA" \
             --query "[0].value" -o tsv)
+
+          echo "::add-mask::$SA_KEY"
+          echo "ARM_ACCESS_KEY=$SA_KEY" >> $GITHUB_ENV
 
           az storage container create \
             --name "$CONTAINER" \
@@ -94,20 +93,16 @@ jobs:
           echo "tf_sa=$SA" >> $GITHUB_OUTPUT
           echo "tf_container=$CONTAINER" >> $GITHUB_OUTPUT
 
-  # =========================
+  # =====================================================
   # 2. NETWORK
-  # =========================
+  # =====================================================
   network:
     runs-on: ubuntu-latest
     needs: setup
-    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.6.0"
 
       - name: Terraform Init - Network
         working-directory: infraestructure/01-network
@@ -129,13 +124,12 @@ jobs:
         working-directory: infraestructure/01-network
         run: terraform apply -auto-approve -input=false
 
-  # =========================
+  # =====================================================
   # 3. ACR
-  # =========================
+  # =====================================================
   acr:
     runs-on: ubuntu-latest
     needs: setup
-    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - uses: actions/checkout@v4
@@ -161,13 +155,12 @@ jobs:
         working-directory: infraestructure/02-acr
         run: terraform apply -auto-approve -input=false
 
-  # =========================
+  # =====================================================
   # 4. AKS
-  # =========================
+  # =====================================================
   aks:
     runs-on: ubuntu-latest
     needs: [network, acr]
-    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - uses: actions/checkout@v4
@@ -193,13 +186,12 @@ jobs:
         working-directory: infraestructure/03-aks
         run: terraform apply -auto-approve -input=false
 
-  # =========================
+  # =====================================================
   # 5. DATABASE
-  # =========================
+  # =====================================================
   database:
     runs-on: ubuntu-latest
     needs: network
-    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - uses: actions/checkout@v4
@@ -225,13 +217,12 @@ jobs:
         working-directory: infraestructure/05-database
         run: terraform apply -auto-approve -input=false
 
-  # =========================
+  # =====================================================
   # 6. BASTION
-  # =========================
+  # =====================================================
   bastion:
     runs-on: ubuntu-latest
     needs: network
-    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - uses: actions/checkout@v4
@@ -245,8 +236,8 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=bastion.tfstate" \
-            -input=false \
-            -reconfigure
+            -reconfigure \
+            -input=false
 
       - name: Terraform Plan - Bastion
         working-directory: infraestructure/04-bastion
