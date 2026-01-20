@@ -40,6 +40,7 @@ jobs:
       tf_rg: ${{ steps.backend.outputs.tf_rg }}
       tf_sa: ${{ steps.backend.outputs.tf_sa }}
       tf_container: ${{ steps.backend.outputs.tf_container }}
+      access_key: ${{ steps.backend.outputs.access_key }} # Novo output
 
     steps:
       - name: Azure Login (Service Principal)
@@ -92,6 +93,7 @@ jobs:
           echo "tf_rg=$RG" >> $GITHUB_OUTPUT
           echo "tf_sa=$SA" >> $GITHUB_OUTPUT
           echo "tf_container=$CONTAINER" >> $GITHUB_OUTPUT
+          echo "access_key=$SA_KEY" >> $GITHUB_OUTPUT  # Novo output
 
   # =====================================================
   # 2. NETWORK
@@ -112,7 +114,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=network.tfstate" \
-            -backend-config="access_key=$ARM_ACCESS_KEY" \
+            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
             -reconfigure \
             -input=false
 
@@ -130,7 +132,7 @@ jobs:
   # =====================================================
   acr:
     runs-on: ubuntu-latest
-    needs: setup # Pode ser removido para paralelização total, mas mantido para segurança
+    needs: setup
 
     steps:
       - uses: actions/checkout@v4
@@ -144,7 +146,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=acr.tfstate" \
-            -backend-config="access_key=$ARM_ACCESS_KEY" \
+            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
             -reconfigure \
             -input=false
 
@@ -176,7 +178,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=aks.tfstate" \
-            -backend-config="access_key=$ARM_ACCESS_KEY" \
+            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
             -reconfigure \
             -input=false
 
@@ -208,7 +210,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=database.tfstate" \
-            -backend-config="access_key=$ARM_ACCESS_KEY" \
+            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
             -reconfigure \
             -input=false
 
@@ -240,7 +242,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=bastion.tfstate" \
-            -backend-config="access_key=$ARM_ACCESS_KEY" \
+            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
             -reconfigure \
             -input=false
 
