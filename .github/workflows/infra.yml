@@ -51,7 +51,7 @@ jobs:
 
           az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
-      - name: Create Terraform Backend (RG + SA + Container)
+      - name: Create RG + SA + Container with AZ CLI
         id: backend
         run: |
           ENV="${{ github.event.inputs.environment }}"
