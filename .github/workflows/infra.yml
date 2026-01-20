@@ -112,6 +112,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=network.tfstate" \
+            -backend-config="access_key=$ARM_ACCESS_KEY" \
             -reconfigure \
             -input=false
 
@@ -143,6 +144,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=acr.tfstate" \
+            -backend-config="access_key=$ARM_ACCESS_KEY" \
             -reconfigure \
             -input=false
 
@@ -174,6 +176,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=aks.tfstate" \
+            -backend-config="access_key=$ARM_ACCESS_KEY" \
             -reconfigure \
             -input=false
 
@@ -205,6 +208,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=database.tfstate" \
+            -backend-config="access_key=$ARM_ACCESS_KEY" \
             -reconfigure \
             -input=false
 
@@ -236,6 +240,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=bastion.tfstate" \
+            -backend-config="access_key=$ARM_ACCESS_KEY" \
             -reconfigure \
             -input=false
 
