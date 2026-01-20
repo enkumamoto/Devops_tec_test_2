@@ -1,7 +1,7 @@
-# variable "subscription_id" {
-#   description = "Azure Subscription ID"
-#   type        = string
-# }
+variable "subscription_id" {
+  description = "Azure Subscription ID"
+  type        = string
+}
 
 variable "location" {
   description = "Azure region"
@@ -118,47 +118,6 @@ variable "ssh_public_key_content" {
   type        = string
   default     = ""
   sensitive   = true
-}
-
-variable "tf_backend_resource_group" {
-  description = "Backend Resource Group"
-  type        = string
-}
-
-variable "tf_backend_storage_account" {
-  description = "Backend Storage Account"
-  type        = string
-}
-
-variable "tf_backend_container" {
-  description = "Backend Container"
-  type        = string
-}
-
-variable "tf_backend_sas_token" {
-  description = "SAS Token for backend"
-  type        = string
-  sensitive   = true
-}
-
-variable "subscription_id" {
-  description = "Azure Subscription ID"
-  type        = string
-}
-
-variable "vnet_id" {
-  description = "VNet ID from network remote state"
-  type        = string
-}
-
-variable "bastion_subnet_id" {
-  description = "Subnet ID for bastion"
-  type        = string
-}
-
-variable "aks_subnet_cidr" {
-  description = "AKS subnet CIDR"
-  type        = string
 }
 
 variable "tf_backend_resource_group" {
