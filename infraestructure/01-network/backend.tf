@@ -1,4 +1,3 @@
-# Atualizar arquivo: infraestructure/01-network/backend.tf
 terraform {
   backend "azurerm" {
     resource_group_name  = "__TF_BACKEND_RESOURCE_GROUP__"
