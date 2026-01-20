@@ -53,11 +53,6 @@ jobs:
 
           az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
-      # NOTA: Execute estes comandos MANUALMENTE uma vez para criar SP e permissões.
-      # Não inclua no pipeline para evitar recriar SP a cada run.
-      # az ad sp create-for-rbac --name "github-actions-sp" --role Contributor --scopes /subscriptions/0a26822c-9da8-484a-b6f6-05c96b0e9305 --sdk-auth
-      # az role assignment create --assignee 77df8b19-e40c-4690-8dd7-c074f26281cc --role "Storage Blob Data Contributor" --scope /subscriptions/0a26822c-9da8-484a-b6f6-05c96b0e9305/resourceGroups/rg-terraform-state-dev/providers/Microsoft.Storage/storageAccounts/tfstatedevdevops
-
       - name: Create RG + Storage Account + Container
         id: backend
         run: |
@@ -92,7 +87,6 @@ jobs:
             --account-key "$SA_KEY" \
             --public-access off
 
-          # Gere SAS Token para o container (permissões: read, list, write, delete, create)
           SAS_TOKEN=$(az storage container generate-sas \
             --name "$CONTAINER" \
             --account-name "$SA" \
@@ -102,7 +96,6 @@ jobs:
             --https-only \
             --output tsv)
 
-          # Depuração: Verifique se SAS_TOKEN não está vazio
           if [ -z "$SAS_TOKEN" ]; then
             echo "Erro: SAS_TOKEN está vazio. Verifique permissões do SP no Storage Account."
             exit 1
@@ -215,11 +208,16 @@ jobs:
   # =====================================================
   database:
     runs-on: ubuntu-latest
-    needs: [setup, network] # Adicione 'setup' para acessar sas_token
+    needs: [setup, network]
 
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
+
+      - name: Debug Network Outputs
+        run: |
+          echo "vnet_id: ${{ needs.network.outputs.vnet_id }}"
+          echo "database_subnet_id: ${{ needs.network.outputs.database_subnet_id }}"
 
       - name: Terraform Init - Database
         working-directory: infraestructure/05-database
@@ -295,7 +293,7 @@ jobs:
   # =====================================================
   bastion:
     runs-on: ubuntu-latest
-    needs: [setup, network] # Mantido para garantir acesso aos outputs
+    needs: [setup, network]
 
     steps:
       - uses: actions/checkout@v4
@@ -320,7 +318,7 @@ jobs:
             -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
             -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
             -var="bastion_subnet_id=${{ needs.network.outputs.bastion_subnet_id }}" \
-            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_cidr }}" \
+            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_address_prefixes[0] }}" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
@@ -335,7 +333,7 @@ jobs:
             -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
             -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
             -var="bastion_subnet_id=${{ needs.network.outputs.bastion_subnet_id }}" \
-            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_cidr }}" \
+            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_address_prefixes[0] }}" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
@@ -364,7 +362,6 @@ jobs:
 
       - name: Get AKS Credentials
         run: |
-          # Substitua pelos outputs reais do job AKS se disponíveis
           az aks get-credentials \
             --resource-group "${{ needs.aks.outputs.resource_group_name || 'rg-aks-dev' }}" \
             --name "${{ needs.aks.outputs.cluster_name || 'aks-dev' }}" \
