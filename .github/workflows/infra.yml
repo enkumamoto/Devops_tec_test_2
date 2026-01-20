@@ -40,7 +40,7 @@ jobs:
       tf_rg: ${{ steps.backend.outputs.tf_rg }}
       tf_sa: ${{ steps.backend.outputs.tf_sa }}
       tf_container: ${{ steps.backend.outputs.tf_container }}
-      sas_token: ${{ steps.backend.outputs.sas_token }} # Novo output
+      sas_token: ${{ steps.backend.outputs.sas_token }}
 
     steps:
       - name: Azure Login (Service Principal)
@@ -52,6 +52,11 @@ jobs:
             --tenant "${{ secrets.ARM_TENANT_ID }}"
 
           az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      # NOTA: Execute estes comandos MANUALMENTE uma vez para criar SP e permissões.
+      # Não inclua no pipeline para evitar recriar SP a cada run.
+      # az ad sp create-for-rbac --name "github-actions-sp" --role Contributor --scopes /subscriptions/0a26822c-9da8-484a-b6f6-05c96b0e9305 --sdk-auth
+      # az role assignment create --assignee 77df8b19-e40c-4690-8dd7-c074f26281cc --role "Storage Blob Data Contributor" --scope /subscriptions/0a26822c-9da8-484a-b6f6-05c96b0e9305/resourceGroups/rg-terraform-state-dev/providers/Microsoft.Storage/storageAccounts/tfstatedevdevops
 
       - name: Create RG + Storage Account + Container
         id: backend
@@ -97,11 +102,17 @@ jobs:
             --https-only \
             --output tsv)
 
+          # Depuração: Verifique se SAS_TOKEN não está vazio
+          if [ -z "$SAS_TOKEN" ]; then
+            echo "Erro: SAS_TOKEN está vazio. Verifique permissões do SP no Storage Account."
+            exit 1
+          fi
+
           echo "::add-mask::$SAS_TOKEN"
           echo "tf_rg=$RG" >> $GITHUB_OUTPUT
           echo "tf_sa=$SA" >> $GITHUB_OUTPUT
           echo "tf_container=$CONTAINER" >> $GITHUB_OUTPUT
-          echo "sas_token=$SAS_TOKEN" >> $GITHUB_OUTPUT  # Novo output
+          echo "sas_token=$SAS_TOKEN" >> $GITHUB_OUTPUT
 
   # =====================================================
   # 2. NETWORK
@@ -236,7 +247,7 @@ jobs:
   # =====================================================
   bastion:
     runs-on: ubuntu-latest
-    needs: [setup, network]
+    needs: [setup, network] # Mantido para garantir acesso aos outputs
 
     steps:
       - uses: actions/checkout@v4
@@ -256,12 +267,32 @@ jobs:
 
       - name: Terraform Plan - Bastion
         working-directory: infraestructure/04-bastion
-        run: terraform plan -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -input=false
+        run: |
+          terraform plan \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
+            -var="bastion_subnet_id=${{ needs.network.outputs.bastion_subnet_id }}" \
+            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_cidr }}" \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -input=false
 
       - name: Terraform Apply - Bastion
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/04-bastion
-        run: terraform apply -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -auto-approve -input=false
+        run: |
+          terraform apply \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
+            -var="bastion_subnet_id=${{ needs.network.outputs.bastion_subnet_id }}" \
+            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_cidr }}" \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -auto-approve -input=false
 
   # =====================================================
   # 7. DEPLOY APP/K8S
@@ -285,11 +316,10 @@ jobs:
 
       - name: Get AKS Credentials
         run: |
-          # Substitua pelos outputs reais do job AKS (ex.: resource group e cluster name)
-          # Assumindo que você tenha outputs no job AKS para RG e AKS_NAME; ajuste conforme necessário
+          # Substitua pelos outputs reais do job AKS se disponíveis
           az aks get-credentials \
-            --resource-group "rg-aks-dev" \  # Exemplo: ajuste para ${{ needs.aks.outputs.rg }} se disponível
-            --name "aks-dev" \               # Exemplo: ajuste para ${{ needs.aks.outputs.aks_name }}
+            --resource-group "${{ needs.aks.outputs.resource_group_name || 'rg-aks-dev' }}" \
+            --name "${{ needs.aks.outputs.cluster_name || 'aks-dev' }}" \
             --overwrite-existing
 
       - name: Deploy App to AKS
