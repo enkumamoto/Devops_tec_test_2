@@ -10,6 +10,5 @@ terraform {
     storage_account_name = ""
     container_name       = ""
     key                  = ""
-    use_azuread_auth     = true
   }
 }

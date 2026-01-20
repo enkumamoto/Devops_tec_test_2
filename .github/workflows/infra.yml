@@ -40,7 +40,7 @@ jobs:
       tf_rg: ${{ steps.backend.outputs.tf_rg }}
       tf_sa: ${{ steps.backend.outputs.tf_sa }}
       tf_container: ${{ steps.backend.outputs.tf_container }}
-      access_key: ${{ steps.backend.outputs.access_key }} # Novo output
+      sas_token: ${{ steps.backend.outputs.sas_token }} # Novo output
 
     steps:
       - name: Azure Login (Service Principal)
@@ -81,19 +81,27 @@ jobs:
             --account-name "$SA" \
             --query "[0].value" -o tsv)
 
-          echo "::add-mask::$SA_KEY"
-          echo "ARM_ACCESS_KEY=$SA_KEY" >> $GITHUB_ENV
-
           az storage container create \
             --name "$CONTAINER" \
             --account-name "$SA" \
             --account-key "$SA_KEY" \
             --public-access off
 
+          # Gere SAS Token para o container (permissões: read, list, write, delete, create)
+          SAS_TOKEN=$(az storage container generate-sas \
+            --name "$CONTAINER" \
+            --account-name "$SA" \
+            --account-key "$SA_KEY" \
+            --permissions "rlwcd" \
+            --expiry "2026-12-31" \
+            --https-only \
+            --output tsv)
+
+          echo "::add-mask::$SAS_TOKEN"
           echo "tf_rg=$RG" >> $GITHUB_OUTPUT
           echo "tf_sa=$SA" >> $GITHUB_OUTPUT
           echo "tf_container=$CONTAINER" >> $GITHUB_OUTPUT
-          echo "access_key=$SA_KEY" >> $GITHUB_OUTPUT  # Novo output
+          echo "sas_token=$SAS_TOKEN" >> $GITHUB_OUTPUT  # Novo output
 
   # =====================================================
   # 2. NETWORK
@@ -114,7 +122,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=network.tfstate" \
-            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
+            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
             -reconfigure \
             -input=false
 
@@ -146,7 +154,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=acr.tfstate" \
-            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
+            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
             -reconfigure \
             -input=false
 
@@ -178,18 +186,18 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=aks.tfstate" \
-            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
+            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
             -reconfigure \
             -input=false
 
       - name: Terraform Plan - AKS
         working-directory: infraestructure/03-aks
-        run: terraform plan -input=false
+        run: terraform plan -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -input=false
 
       - name: Terraform Apply - AKS
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/03-aks
-        run: terraform apply -auto-approve -input=false
+        run: terraform apply -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -auto-approve -input=false
 
   # =====================================================
   # 5. DATABASE
@@ -210,18 +218,18 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=database.tfstate" \
-            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
+            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
             -reconfigure \
             -input=false
 
       - name: Terraform Plan - Database
         working-directory: infraestructure/05-database
-        run: terraform plan -input=false
+        run: terraform plan -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -input=false
 
       - name: Terraform Apply - Database
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/05-database
-        run: terraform apply -auto-approve -input=false
+        run: terraform apply -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -auto-approve -input=false
 
   # =====================================================
   # 6. BASTION
@@ -242,18 +250,18 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=bastion.tfstate" \
-            -backend-config="access_key=${{ needs.setup.outputs.access_key }}" \
+            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
             -reconfigure \
             -input=false
 
       - name: Terraform Plan - Bastion
         working-directory: infraestructure/04-bastion
-        run: terraform plan -input=false
+        run: terraform plan -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -input=false
 
       - name: Terraform Apply - Bastion
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/04-bastion
-        run: terraform apply -auto-approve -input=false
+        run: terraform apply -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -auto-approve -input=false
 
   # =====================================================
   # 7. DEPLOY APP/K8S
