@@ -6,8 +6,8 @@ vnet_name          = "vnet"
 vnet_address_space = ["10.0.0.0/16"]
 
 # Subnet Configuration (mais espaços para produção)
-aks_subnet_address_prefixes      = ["10.0.1.0/24", "10.0.11.0/24"] # Multi-AZ
-database_subnet_address_prefixes = ["10.0.2.0/24", "10.0.12.0/24"] # HA
+aks_subnet_address_prefixes      = ["10.0.1.0/24"]
+database_subnet_address_prefixes = ["10.0.2.0/24"]
 bastion_subnet_address_prefixes  = ["10.0.3.0/24"]
 
 # Optional Variables
