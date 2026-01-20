@@ -1,5 +1,5 @@
 resource "azurerm_network_security_group" "bastion" {
-  name                = "nsg-bastion-${var.environment}"
+  name                = "nsgbastion${var.environment}"
   location            = var.location
   resource_group_name = azurerm_resource_group.bastion.name
 
