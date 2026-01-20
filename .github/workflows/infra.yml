@@ -288,7 +288,7 @@ jobs:
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-          -auto-approve -input=false
+            -auto-approve -input=false
 
   # =====================================================
   # 6. BASTION
