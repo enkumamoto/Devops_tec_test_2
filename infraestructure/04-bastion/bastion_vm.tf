@@ -1,3 +1,9 @@
+resource "tls_private_key" "bastion" {
+  count     = var.generate_ssh_key ? 1 : 0
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
 resource "azurerm_linux_virtual_machine" "bastion" {
   name                = "${var.vm_name}-${var.environment}"
   resource_group_name = azurerm_resource_group.bastion.name
@@ -44,10 +50,4 @@ resource "azurerm_linux_virtual_machine" "bastion" {
       custom_data
     ]
   }
-}
-
-resource "tls_private_key" "bastion" {
-  count     = var.generate_ssh_key ? 1 : 0
-  algorithm = "RSA"
-  rsa_bits  = 4096
 }

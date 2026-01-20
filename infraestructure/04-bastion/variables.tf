@@ -113,46 +113,9 @@ variable "os_disk_type" {
   }
 }
 
-variable "generate_ssh_key" {
-  description = "Generate SSH key pair automatically"
-  type        = bool
-  default     = true
-}
-
 variable "ssh_public_key_content" {
   description = "SSH public key content (alternative to file path)"
   type        = string
   default     = ""
   sensitive   = true
-}
-
-variable "ssh_public_key_path" {
-  description = "Path to SSH public key file (if not generating)"
-  type        = string
-  default     = "~/.ssh/id_rsa.pub"
-}
-
-variable "azure_subscription_id" {
-  description = "Azure Subscription ID"
-  type        = string
-  default     = ""
-}
-
-variable "azure_client_id" {
-  description = "Azure Service Principal Client ID"
-  type        = string
-  default     = ""
-}
-
-variable "azure_client_secret" {
-  description = "Azure Service Principal Client Secret"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "azure_tenant_id" {
-  description = "Azure Tenant ID"
-  type        = string
-  default     = ""
 }
