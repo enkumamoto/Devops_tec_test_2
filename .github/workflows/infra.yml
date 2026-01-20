@@ -130,7 +130,7 @@ jobs:
   # =====================================================
   acr:
     runs-on: ubuntu-latest
-    needs: setup
+    needs: setup # Pode ser removido para paralelização total, mas mantido para segurança
 
     steps:
       - uses: actions/checkout@v4
@@ -226,7 +226,7 @@ jobs:
   # =====================================================
   bastion:
     runs-on: ubuntu-latest
-    needs: network
+    needs: [setup, network]
 
     steps:
       - uses: actions/checkout@v4
@@ -253,12 +253,45 @@ jobs:
         working-directory: infraestructure/04-bastion
         run: terraform apply -auto-approve -input=false
 
+  # =====================================================
+  # 7. DEPLOY APP/K8S
+  # =====================================================
+  deploy-app:
+    runs-on: ubuntu-latest
+    needs: aks
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (Service Principal)
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
+
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Get AKS Credentials
+        run: |
+          # Substitua pelos outputs reais do job AKS (ex.: resource group e cluster name)
+          # Assumindo que você tenha outputs no job AKS para RG e AKS_NAME; ajuste conforme necessário
+          az aks get-credentials \
+            --resource-group "rg-aks-dev" \  # Exemplo: ajuste para ${{ needs.aks.outputs.rg }} se disponível
+            --name "aks-dev" \               # Exemplo: ajuste para ${{ needs.aks.outputs.aks_name }}
+            --overwrite-existing
+
+      - name: Deploy App to AKS
+        run: |
+          kubectl apply -f infraestructure/k8s/
+
   # =========================
-  # 7. VALIDATE & SAVE OUTPUTS
+  # 8. VALIDATE & SAVE OUTPUTS
   # =========================
   validate:
     runs-on: ubuntu-latest
-    needs: [network, acr, aks, database, bastion]
+    needs: [network, acr, aks, database, bastion, deploy-app]
     if: always()
 
     steps:
@@ -270,15 +303,17 @@ jobs:
           echo "AKS: ${{ needs.aks.result }}"
           echo "Database: ${{ needs.database.result }}"
           echo "Bastion: ${{ needs.bastion.result }}"
+          echo "Deploy App: ${{ needs.deploy-app.result }}"
 
           SUCCESS_COUNT=0
-          TOTAL_COUNT=5
+          TOTAL_COUNT=6
 
           if [ "${{ needs.network.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
           if [ "${{ needs.acr.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
           if [ "${{ needs.aks.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
           if [ "${{ needs.database.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
           if [ "${{ needs.bastion.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
+          if [ "${{ needs.deploy-app.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
 
           echo ""
           echo "🎯 Summary: $SUCCESS_COUNT/$TOTAL_COUNT modules succeeded"

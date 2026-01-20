@@ -1,7 +1,7 @@
 location    = "eastus"
 environment = "dev"
 
-resource_group_name = "rg-bastion-dev"
+resource_group_name = "bastion"
 
 vm_name = "bastion"
 vm_size = "Standard_B2s"
