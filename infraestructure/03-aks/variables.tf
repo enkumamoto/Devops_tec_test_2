@@ -159,15 +159,6 @@ variable "acr_id" {
   default     = ""
 }
 
-# Em rbac_acr.tf, modificar:
-resource "azurerm_role_assignment" "aks_acr_pull" {
-  count = var.enable_acr_rbac && var.acr_id != "" ? 1 : 0
-
-  scope                = var.acr_id
-  role_definition_name = "AcrPull"
-  principal_id         = azurerm_kubernetes_cluster.devops.kubelet_identity[0].object_id
-}
-
 # =========================
 # Terraform Remote State (Backend)
 # =========================
