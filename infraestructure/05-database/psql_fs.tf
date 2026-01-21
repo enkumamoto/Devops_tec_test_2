@@ -23,7 +23,7 @@ resource "random_string" "server_suffix" {
 
 resource "azurerm_postgresql_flexible_server" "devops" {
   name                = lower("${var.db_name}-${var.environment}-${random_string.server_suffix.result}")
-  resource_group_name = var.resource_group_name
+  resource_group_name = azurerm_resource_group.db.name
   location            = var.location
 
   administrator_login    = "pgadmin${random_string.postgres_username.result}"
