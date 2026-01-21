@@ -37,6 +37,8 @@ resource "azurerm_postgresql_flexible_server" "devops" {
   delegated_subnet_id = var.database_subnet_id
   private_dns_zone_id = azurerm_private_dns_zone.postgres.id
 
+  public_network_access_enabled = false
+
   backup_retention_days        = var.backup_retention_days
   geo_redundant_backup_enabled = var.geo_redundant_backup_enabled
 
