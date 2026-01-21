@@ -83,9 +83,13 @@ resource "azurerm_key_vault_secret" "postgresql_host" {
   }
 
   lifecycle {
-    ignore_changes        = [value, tags]
-    create_before_destroy = true
+    ignore_changes = [
+      certificate_permissions,
+      key_permissions,
+      secret_permissions
+    ]
   }
+
 
   depends_on = [
     azurerm_key_vault.devops,

@@ -206,6 +206,15 @@ jobs:
             -var="enable_acr_rbac=true" \
             -input=false
 
+      - name: Configure Azure Permissions
+        run: |
+          # Dar permissão de Owner ao Service Principal temporariamente
+          az role assignment create \
+            --assignee "${{ secrets.ARM_CLIENT_ID }}" \
+            --role "Owner" \
+            --scope "/subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            || echo "Permissão já existe ou erro ignorado"
+
       - name: Terraform Apply - AKS
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/03-aks
@@ -215,6 +224,7 @@ jobs:
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -var="enable_acr_rbac=false" \
             -auto-approve -input=false
 
   # =====================================================

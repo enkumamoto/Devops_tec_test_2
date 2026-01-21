@@ -5,11 +5,14 @@
 #   principal_id = azurerm_kubernetes_cluster.devops.kubelet_identity[0].object_id
 # }
 resource "azurerm_role_assignment" "aks_acr" {
-  principal_id = azurerm_kubernetes_cluster.devops.kubelet_identity[0].object_id
+  count = var.enable_acr_rbac ? 1 : 0
 
-  role_definition_name = "AcrPull"
   scope                = data.terraform_remote_state.acr.outputs.acr_id
-  count                = data.terraform_remote_state.acr.outputs.acr_id != "" ? 1 : 0
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_kubernetes_cluster.devops.kubelet_identity[0].object_id
+  depends_on = [
+    azurerm_kubernetes_cluster.devops
+  ]
 }
 
 resource "azurerm_role_assignment" "aks_acr_pull" {
