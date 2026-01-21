@@ -209,6 +209,7 @@ jobs:
   database:
     runs-on: ubuntu-latest
     needs: [setup, network]
+    if: success() # Evita execução se network falhar
 
     steps:
       - uses: actions/checkout@v4
@@ -218,6 +219,10 @@ jobs:
         run: |
           echo "vnet_id: ${{ needs.network.outputs.vnet_id }}"
           echo "database_subnet_id: ${{ needs.network.outputs.database_subnet_id }}"
+          if [ -z "${{ needs.network.outputs.vnet_id }}" ]; then
+            echo "Erro: vnet_id está vazio. Verifique o job network."
+            exit 1
+          fi
 
       - name: Terraform Init - Database
         working-directory: infraestructure/05-database
