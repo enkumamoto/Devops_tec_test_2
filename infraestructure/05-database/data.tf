@@ -1,11 +1,11 @@
-data "terraform_remote_state" "network" {
-  backend = "azurerm"
+# data "terraform_remote_state" "network" {
+#   backend = "azurerm"
 
-  config = {
-    resource_group_name  = var.tf_backend_resource_group
-    storage_account_name = var.tf_backend_storage_account
-    container_name       = var.tf_backend_container
-    key                  = "network.tfstate"
-    sas_token            = var.tf_backend_sas_token
-  }
-}
+#   config = {
+#     resource_group_name  = var.tf_backend_resource_group
+#     storage_account_name = var.tf_backend_storage_account
+#     container_name       = var.tf_backend_container
+#     key                  = "network.tfstate"
+#     sas_token            = var.tf_backend_sas_token
+#   }
+# }
