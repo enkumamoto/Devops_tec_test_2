@@ -3,7 +3,7 @@ resource "azurerm_kubernetes_cluster" "devops" {
   location            = azurerm_resource_group.aks.location
   resource_group_name = azurerm_resource_group.aks.name
   dns_prefix          = "${var.dns_prefix}-${var.environment}"
-  # kubernetes_version  = var.kubernetes_version
+  kubernetes_version  = var.kubernetes_version
 
   identity {
     type = "SystemAssigned"
