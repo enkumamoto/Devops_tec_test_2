@@ -202,6 +202,8 @@ jobs:
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -var="acr_id=$(terraform -chdir=../02-acr output -raw acr_id)" \
+            -var="enable_acr_rbac=true" \
             -input=false
 
       - name: Terraform Apply - AKS
