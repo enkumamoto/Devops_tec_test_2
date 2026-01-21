@@ -227,10 +227,9 @@ jobs:
 
       - name: Get Network IDs from Azure
         run: |
-          # Nomes baseados no main.tf e terraform.tfvars do 01-network
-          RG_NETWORK="rg-network-dev"  # Resource Group
-          VNET_NAME="vnet"             # VNet name (de var.vnet_name = "vnet")
-          SUBNET_NAME="snet-dev-devops-database"  # Subnet name (de locals)
+          RG_NETWORK="rg-network-dev"
+          VNET_NAME="vnet"
+          SUBNET_NAME="snet-dev-devops-database"
 
           VNET_ID=$(az network vnet show \
             --resource-group "$RG_NETWORK" \
@@ -243,9 +242,8 @@ jobs:
             --name "$SUBNET_NAME" \
             --query id -o tsv)
 
-          # Verifique se os IDs foram obtidos
           if [ -z "$VNET_ID" ] || [ -z "$DATABASE_SUBNET_ID" ]; then
-            echo "Erro: Não foi possível obter VNET_ID ou DATABASE_SUBNET_ID. Verifique se o job network criou os recursos."
+            echo "Erro ao obter VNET_ID ou DATABASE_SUBNET_ID"
             exit 1
           fi
 
@@ -286,10 +284,6 @@ jobs:
             -var="zone=1" \
             -var="high_availability_mode=Disabled" \
             -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
             -input=false
 
       - name: Terraform Apply - Database
@@ -315,11 +309,34 @@ jobs:
             -var="zone=1" \
             -var="high_availability_mode=Disabled" \
             -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -auto-approve -input=false
+            -auto-approve \
+            -input=false
+
+      - name: Terraform Apply - Database
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
+        working-directory: infraestructure/05-database
+        run: |
+          terraform apply \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="location=eastus" \
+            -var="environment=dev" \
+            -var="resource_group_name=rg-database-dev" \
+            -var="vnet_id=$VNET_ID" \
+            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
+            -var="db_name=psql-devops" \
+            -var="postgres_version=15" \
+            -var="sku_name=B_Standard_B1ms" \
+            -var="storage_mb=32768" \
+            -var="backup_retention_days=7" \
+            -var="geo_redundant_backup_enabled=false" \
+            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
+            -var="charset=UTF8" \
+            -var="collation=en_US.utf8" \
+            -var="zone=1" \
+            -var="high_availability_mode=Disabled" \
+            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
+            -auto-approve \
+            -input=false
 
   # =====================================================
   # 6. BASTION
