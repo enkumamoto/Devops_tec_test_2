@@ -196,12 +196,24 @@ jobs:
 
       - name: Terraform Plan - AKS
         working-directory: infraestructure/03-aks
-        run: terraform plan -input=false
+        run: |
+          terraform plan \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -input=false
 
       - name: Terraform Apply - AKS
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/03-aks
-        run: terraform apply -auto-approve -input=false
+        run: |
+          terraform apply \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -auto-approve -input=false
 
   # =====================================================
   # 5. DATABASE

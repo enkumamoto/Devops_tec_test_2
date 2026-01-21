@@ -167,3 +167,27 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
   role_definition_name = "AcrPull"
   principal_id         = azurerm_kubernetes_cluster.devops.kubelet_identity[0].object_id
 }
+
+# =========================
+# Terraform Remote State (Backend)
+# =========================
+variable "tf_backend_resource_group" {
+  description = "Resource Group onde está o tfstate"
+  type        = string
+}
+
+variable "tf_backend_storage_account" {
+  description = "Storage Account do tfstate"
+  type        = string
+}
+
+variable "tf_backend_container" {
+  description = "Container do tfstate"
+  type        = string
+}
+
+variable "tf_backend_sas_token" {
+  description = "SAS Token para acesso ao tfstate"
+  type        = string
+  sensitive   = true
+}
