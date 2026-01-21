@@ -82,13 +82,13 @@ resource "azurerm_key_vault_secret" "postgresql_host" {
     Sensitive   = "true"
   }
 
-  lifecycle {
-    ignore_changes = [
-      #certificate_permissions,
-      key_permissions,
-      secret_permissions
-    ]
-  }
+  # lifecycle {
+  #   ignore_changes = [
+  #     #certificate_permissions,
+  #     key_permissions,
+  #     secret_permissions
+  #   ]
+  # }
 
 
   depends_on = [
