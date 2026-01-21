@@ -5,8 +5,13 @@ packages:
   - docker.io
   - docker-compose-plugin
   - puppet-agent
+  - git # Adicionado: para clonar o repositório
 
 runcmd:
   - systemctl enable docker
   - systemctl start docker
   - usermod -aG docker ${admin_username}
+  - git clone https://github.com/enkumamoto/Devops_tec_test_2.git /tmp/repo # Clona o repositório (substitua pela URL real)
+  - cd /tmp/repo/puppet
+  - puppet apply manifests/site.pp # Executa os manifests do Puppet
+  - rm -rf /tmp/repo # Limpa o repositório após execução

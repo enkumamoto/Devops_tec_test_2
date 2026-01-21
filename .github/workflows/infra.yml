@@ -380,34 +380,40 @@ jobs:
   # 7. DEPLOY APP/K8S
   # =====================================================
   deploy-app:
-    runs-on: ubuntu-latest
-    needs: aks
+    runs-on: [self-hosted, bastion]
+    needs: [aks, database, bastion]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure Login (Service Principal)
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version  # Verifica instalação
+
+      - name: Azure Login
         run: |
           az login \
             --service-principal \
             --username "${{ secrets.ARM_CLIENT_ID }}" \
             --password "${{ secrets.ARM_CLIENT_SECRET }}" \
             --tenant "${{ secrets.ARM_TENANT_ID }}"
-
           az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
       - name: Get AKS Credentials
         run: |
           az aks get-credentials \
-            --resource-group "rg-aks-dev" \
-            --name "aks-devops-dev-dev" \
+            --resource-group "${{ needs.aks.outputs.resource_group_name }}" \
+            --name "${{ needs.aks.outputs.cluster_name }}" \
             --overwrite-existing
 
-      - name: Deploy App to AKS (Private Cluster)
+      - name: Deploy FastAPI via Helm
         run: |
-          kubectl apply \
-            --validate=false \
-            -f infraestructure/k8s/
+          helm upgrade --install fastapi \
+            infraestructure/helm/fastapi \
+            --namespace devops-app \
+            --create-namespace \
+            --wait  # Aguarda rollout completo
 
   # =========================
   # 8. VALIDATE & SAVE OUTPUTS

@@ -1,0 +1,39 @@
+namespace: devops-app
+
+image:
+  repository: myacr.azurecr.io/fastapi-app # Confirme se o ACR existe e a imagem foi pushada
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+  hosts:
+    - host: fastapi.devops.local # Adicionado: domínio para o ingress
+      paths:
+        - path: /
+          pathType: Prefix
+
+keyVault:
+  enabled: true
+  name: kv-aks-devops-dev-dev # Confirme o nome do Key Vault
+  tenantId: $TENANT_ID
+  managedIdentityClientId: $CLIENT_ID
