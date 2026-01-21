@@ -219,8 +219,8 @@ jobs:
         run: |
           echo "vnet_id: ${{ needs.network.outputs.vnet_id }}"
           echo "database_subnet_id: ${{ needs.network.outputs.database_subnet_id }}"
-          if [ -z "${{ needs.network.outputs.vnet_id }}" ]; then
-            echo "Erro: vnet_id está vazio. Verifique o job network."
+          if [ -z "${{ needs.network.outputs.vnet_id }}" ] || [ -z "${{ needs.network.outputs.database_subnet_id }}" ]; then
+            echo "Erro: Outputs do network estão vazios. Verifique o job network."
             exit 1
           fi
 
