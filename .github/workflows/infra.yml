@@ -227,10 +227,10 @@ jobs:
 
       - name: Get Network IDs from Azure
         run: |
-          # Substitua pelos nomes exatos dos recursos criados pelo job network
-          RG_NETWORK="rg-network-dev"  # Resource Group do network
-          VNET_NAME="vnet-dev"         # Nome da VNet
-          SUBNET_NAME="snet-dev-devops-database"  # Nome da subnet database
+          # Nomes baseados no main.tf e terraform.tfvars do 01-network
+          RG_NETWORK="rg-network-dev"  # Resource Group
+          VNET_NAME="vnet"             # VNet name (de var.vnet_name = "vnet")
+          SUBNET_NAME="snet-dev-devops-database"  # Subnet name (de locals)
 
           VNET_ID=$(az network vnet show \
             --resource-group "$RG_NETWORK" \
