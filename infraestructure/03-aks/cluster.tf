@@ -14,9 +14,9 @@ resource "azurerm_kubernetes_cluster" "devops" {
     vm_size = var.node_vm_size
     type    = "VirtualMachineScaleSets"
 
-    auto_scaling_enabled = true
-    min_count            = var.min_node_count
-    max_count            = var.max_node_count
+    enable_auto_scaling = true
+    min_count           = var.min_node_count
+    max_count           = var.max_node_count
 
     vnet_subnet_id = var.aks_subnet_id != "" ? var.aks_subnet_id : null
 
@@ -34,12 +34,11 @@ resource "azurerm_kubernetes_cluster" "devops" {
   private_cluster_enabled           = true
   role_based_access_control_enabled = true
 
-  tags = merge(var.tags)
+  tags = var.tags
 
   lifecycle {
     ignore_changes = [
-      kubernetes_version,
-      default_node_pool[0].node_count
+      kubernetes_version
     ]
   }
 }
