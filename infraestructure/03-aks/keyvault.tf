@@ -78,6 +78,7 @@ resource "azurerm_key_vault_access_policy" "terraform" {
   }
 }
 
+
 resource "azurerm_key_vault_secret" "postgresql_host" {
   name         = "postgresql-host"
   value        = "postgresql-server-placeholder.devops.internal"
