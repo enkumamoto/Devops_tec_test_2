@@ -2,8 +2,8 @@ location            = "eastus"
 environment         = "dev"
 resource_group_name = "rg-database-dev"
 
-vnet_id            = "<SUBSTITUA_PELO_VNET_ID_DO_NETWORK_MODULE>"
-database_subnet_id = "<SUBSTITUA_PELO_DATABASE_SUBNET_ID_DO_NETWORK_MODULE>"
+# vnet_id            = "<SUBSTITUA_PELO_VNET_ID_DO_NETWORK_MODULE>"
+# database_subnet_id = "<SUBSTITUA_PELO_DATABASE_SUBNET_ID_DO_NETWORK_MODULE>"
 
 db_name                      = "psql-devops"
 postgres_version             = "15"
