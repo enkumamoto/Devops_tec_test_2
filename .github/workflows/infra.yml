@@ -403,9 +403,11 @@ jobs:
             --name "aks-devops-dev-dev" \
             --overwrite-existing
 
-      - name: Deploy App to AKS
+      - name: Deploy App to AKS (Private Cluster)
         run: |
-          kubectl apply -f infraestructure/k8s/
+          kubectl apply \
+            --validate=false \
+            -f infraestructure/k8s/
 
   # =========================
   # 8. VALIDATE & SAVE OUTPUTS
