@@ -10,18 +10,19 @@ resource "azurerm_kubernetes_cluster" "devops" {
   }
 
   default_node_pool {
-    name       = var.system_node_pool_name
-    node_count = 1
-    vm_size    = var.node_vm_size
-    # vnet_subnet_id = var.aks_subnet_id
+    name    = var.system_node_pool_name
+    vm_size = var.node_vm_size
+    type    = "VirtualMachineScaleSets"
+
+    auto_scaling_enabled = true
+    min_count            = var.min_node_count
+    max_count            = var.max_node_count
+
     vnet_subnet_id = var.aks_subnet_id != "" ? var.aks_subnet_id : null
-    min_count      = var.min_node_count
-    max_count      = var.max_node_count
-    type           = "VirtualMachineScaleSets"
 
     node_labels = {
-      "pool"        = "system"
-      "environment" = var.environment
+      pool        = "system"
+      environment = var.environment
     }
   }
 
