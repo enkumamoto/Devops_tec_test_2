@@ -312,32 +312,6 @@ jobs:
             -auto-approve \
             -input=false
 
-      - name: Terraform Apply - Database
-        if: ${{ github.event.inputs.tf_action == 'apply' }}
-        working-directory: infraestructure/05-database
-        run: |
-          terraform apply \
-            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="location=eastus" \
-            -var="environment=dev" \
-            -var="resource_group_name=rg-database-dev" \
-            -var="vnet_id=$VNET_ID" \
-            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
-            -var="db_name=psql-devops" \
-            -var="postgres_version=15" \
-            -var="sku_name=B_Standard_B1ms" \
-            -var="storage_mb=32768" \
-            -var="backup_retention_days=7" \
-            -var="geo_redundant_backup_enabled=false" \
-            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
-            -var="charset=UTF8" \
-            -var="collation=en_US.utf8" \
-            -var="zone=1" \
-            -var="high_availability_mode=Disabled" \
-            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
-            -auto-approve \
-            -input=false
-
   # =====================================================
   # 6. BASTION
   # =====================================================
