@@ -12,7 +12,7 @@ resource_group_name = "aks"
 aks_name   = "aks-devops-dev"
 dns_prefix = "aks-devops"
 
-kubernetes_version = "1.28.5"
+kubernetes_version = "1.27.9"
 
 system_node_pool_name = "system"
 
