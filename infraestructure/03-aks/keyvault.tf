@@ -84,7 +84,7 @@ resource "azurerm_key_vault_secret" "postgresql_host" {
 
   lifecycle {
     ignore_changes = [
-      certificate_permissions,
+      #certificate_permissions,
       key_permissions,
       secret_permissions
     ]

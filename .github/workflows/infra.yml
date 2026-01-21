@@ -180,7 +180,31 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Azure Login
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Get ACR ID
+        id: get_acr
+        run: |
+          # Pega o ID do ACR já criado no módulo anterior
+          ACR_ID=$(az acr show \
+            --name "eijidevopsdevacr" \
+            --resource-group "rg-acr-dev" \
+            --query id -o tsv)
+          echo "ACR_ID=$ACR_ID" >> $GITHUB_OUTPUT
+          echo "ACR_ID=$ACR_ID" >> $GITHUB_ENV
 
       - name: Terraform Init - AKS
         working-directory: infraestructure/03-aks
@@ -202,18 +226,9 @@ jobs:
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -var="acr_id=$(terraform -chdir=../02-acr output -raw acr_id)" \
-            -var="enable_acr_rbac=true" \
+            -var="acr_id=${{ env.ACR_ID }}" \
+            -var="enable_acr_rbac=false" \  # DESABILITE PARA TESTE - configure manual depois
             -input=false
-
-      - name: Configure Azure Permissions
-        run: |
-          # Dar permissão de Owner ao Service Principal temporariamente
-          az role assignment create \
-            --assignee "${{ secrets.ARM_CLIENT_ID }}" \
-            --role "Owner" \
-            --scope "/subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            || echo "Permissão já existe ou erro ignorado"
 
       - name: Terraform Apply - AKS
         if: ${{ github.event.inputs.tf_action == 'apply' }}
@@ -224,8 +239,28 @@ jobs:
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -var="enable_acr_rbac=false" \
+            -var="acr_id=${{ env.ACR_ID }}" \
+            -var="enable_acr_rbac=false" \  # Desabilita RBAC para evitar erro de permissão
             -auto-approve -input=false
+
+      - name: Configure ACR Pull Access (Manual para teste)
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
+        run: |
+          # Configuração manual do RBAC para evitar complexidade no teste
+          echo "Configurando acesso ACR->AKS manualmente..."
+
+          # Pega o ID do kubelet identity do AKS
+          KUBELET_OBJECT_ID=$(az aks show \
+            -g "rg-aks-dev" \
+            -n "aks-devops-dev-dev" \
+            --query identityProfile.kubeletidentity.objectId -o tsv)
+
+          # Cria role assignment manualmente
+          az role assignment create \
+            --assignee "$KUBELET_OBJECT_ID" \
+            --role "AcrPull" \
+            --scope "${{ env.ACR_ID }}" \
+            || echo "Role assignment já existe ou erro ignorado"
 
   # =====================================================
   # 5. DATABASE
