@@ -399,8 +399,8 @@ jobs:
       - name: Get AKS Credentials
         run: |
           az aks get-credentials \
-            --resource-group "${{ needs.aks.outputs.resource_group_name || 'rg-aks-dev' }}" \
-            --name "${{ needs.aks.outputs.cluster_name || 'aks-dev' }}" \
+            --resource-group "rg-aks-dev" \
+            --name "aks-devops-dev-dev" \
             --overwrite-existing
 
       - name: Deploy App to AKS
