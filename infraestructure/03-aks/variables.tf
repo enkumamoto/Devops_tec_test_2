@@ -167,13 +167,3 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
   role_definition_name = "AcrPull"
   principal_id         = azurerm_kubernetes_cluster.devops.kubelet_identity[0].object_id
 }
-
-variable "tf_backend_resource_group" {}
-
-variable "tf_backend_storage_account" {}
-
-variable "tf_backend_container" {}
-
-variable "tf_backend_sas_token" {
-  sensitive = true
-}
