@@ -66,6 +66,16 @@ resource "azurerm_key_vault_access_policy" "terraform" {
   certificate_permissions = [
     "Get", "List", "Create", "Delete", "Update", "Import", "Backup", "Restore", "ManageContacts", "ManageIssuers", "GetIssuers", "ListIssuers", "SetIssuers", "DeleteIssuers"
   ]
+
+  lifecycle {
+    ignore_changes = [
+      certificate_permissions,
+      key_permissions,
+      secret_permissions,
+      object_id,
+      tenant_id
+    ]
+  }
 }
 
 resource "azurerm_key_vault_secret" "postgresql_host" {
@@ -82,13 +92,10 @@ resource "azurerm_key_vault_secret" "postgresql_host" {
     Sensitive   = "true"
   }
 
-  # lifecycle {
-  #   ignore_changes = [
-  #     #certificate_permissions,
-  #     key_permissions,
-  #     secret_permissions
-  #   ]
-  # }
+  lifecycle {
+    ignore_changes  = [value]
+    prevent_destroy = true
+  }
 
 
   depends_on = [
