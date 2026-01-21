@@ -209,20 +209,48 @@ jobs:
   database:
     runs-on: ubuntu-latest
     needs: [setup, network]
-    if: success() # Evita execução se network falhar
+    if: success()
 
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
 
-      - name: Debug Network Outputs
+      - name: Azure Login for Resource Query
         run: |
-          echo "vnet_id: ${{ needs.network.outputs.vnet_id }}"
-          echo "database_subnet_id: ${{ needs.network.outputs.database_subnet_id }}"
-          if [ -z "${{ needs.network.outputs.vnet_id }}" ] || [ -z "${{ needs.network.outputs.database_subnet_id }}" ]; then
-            echo "Erro: Outputs do network estão vazios. Verifique o job network."
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
+
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Get Network IDs from Azure
+        run: |
+          # Substitua pelos nomes exatos dos recursos criados pelo job network
+          RG_NETWORK="rg-network-dev"  # Resource Group do network
+          VNET_NAME="vnet-dev"         # Nome da VNet
+          SUBNET_NAME="snet-dev-devops-database"  # Nome da subnet database
+
+          VNET_ID=$(az network vnet show \
+            --resource-group "$RG_NETWORK" \
+            --name "$VNET_NAME" \
+            --query id -o tsv)
+
+          DATABASE_SUBNET_ID=$(az network vnet subnet show \
+            --resource-group "$RG_NETWORK" \
+            --vnet-name "$VNET_NAME" \
+            --name "$SUBNET_NAME" \
+            --query id -o tsv)
+
+          # Verifique se os IDs foram obtidos
+          if [ -z "$VNET_ID" ] || [ -z "$DATABASE_SUBNET_ID" ]; then
+            echo "Erro: Não foi possível obter VNET_ID ou DATABASE_SUBNET_ID. Verifique se o job network criou os recursos."
             exit 1
           fi
+
+          echo "VNET_ID=$VNET_ID" >> $GITHUB_ENV
+          echo "DATABASE_SUBNET_ID=$DATABASE_SUBNET_ID" >> $GITHUB_ENV
 
       - name: Terraform Init - Database
         working-directory: infraestructure/05-database
@@ -244,8 +272,8 @@ jobs:
             -var="location=eastus" \
             -var="environment=dev" \
             -var="resource_group_name=rg-database-dev" \
-            -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
-            -var="database_subnet_id=${{ needs.network.outputs.database_subnet_id }}" \
+            -var="vnet_id=$VNET_ID" \
+            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
             -var="db_name=psql-devops" \
             -var="postgres_version=15" \
             -var="sku_name=B_Standard_B1ms" \
@@ -273,8 +301,8 @@ jobs:
             -var="location=eastus" \
             -var="environment=dev" \
             -var="resource_group_name=rg-database-dev" \
-            -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
-            -var="database_subnet_id=${{ needs.network.outputs.database_subnet_id }}" \
+            -var="vnet_id=$VNET_ID" \
+            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
             -var="db_name=psql-devops" \
             -var="postgres_version=15" \
             -var="sku_name=B_Standard_B1ms" \
