@@ -1,5 +1,5 @@
 environment = "dev"
-location    = "eastus"
+location    = "canadacentral"
 
 tags = {
   Environment = "dev"

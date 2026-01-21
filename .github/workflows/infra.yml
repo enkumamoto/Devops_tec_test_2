@@ -61,7 +61,7 @@ jobs:
           RG="rg-terraform-state-${ENV}"
           SA="tfstate${ENV}devops"
           CONTAINER="tfstate"
-          LOCATION="eastus"
+          LOCATION="canadacentral"
 
           az group create \
             --name "$RG" \
@@ -267,7 +267,7 @@ jobs:
         run: |
           terraform plan \
             -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="location=eastus" \
+            -var="location=canadacentral" \
             -var="environment=dev" \
             -var="resource_group_name=rg-database-dev" \
             -var="vnet_id=$VNET_ID" \
@@ -292,7 +292,7 @@ jobs:
         run: |
           terraform apply \
             -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="location=eastus" \
+            -var="location=canadacentral" \
             -var="environment=dev" \
             -var="resource_group_name=rg-database-dev" \
             -var="vnet_id=$VNET_ID" \

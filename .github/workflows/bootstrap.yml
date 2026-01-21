@@ -6,7 +6,7 @@ on:
       location:
         description: "Azure region"
         required: true
-        default: "eastus"
+        default: "canadacentral"
         type: string
       environment:
         description: "Environment name"

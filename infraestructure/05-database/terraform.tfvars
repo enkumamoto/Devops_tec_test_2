@@ -1,4 +1,4 @@
-location            = "eastus"
+location            = "canadacentral"
 environment         = "dev"
 resource_group_name = "rg-database-dev"
 
