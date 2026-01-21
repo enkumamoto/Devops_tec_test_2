@@ -30,9 +30,11 @@ env:
   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
+  TF_BACKEND_SAS_TOKEN: ${{ secrets.TF_BACKEND_SAS_TOKEN }}
+
 jobs:
   # =====================================================
-  # 1. BACKEND BOOTSTRAP (Storage Account + Key)
+  # 1. BACKEND BOOTSTRAP (RG + Storage + Container)
   # =====================================================
   setup:
     runs-on: ubuntu-latest
@@ -40,7 +42,6 @@ jobs:
       tf_rg: ${{ steps.backend.outputs.tf_rg }}
       tf_sa: ${{ steps.backend.outputs.tf_sa }}
       tf_container: ${{ steps.backend.outputs.tf_container }}
-      sas_token: ${{ steps.backend.outputs.sas_token }}
 
     steps:
       - name: Azure Login (Service Principal)
@@ -87,25 +88,9 @@ jobs:
             --account-key "$SA_KEY" \
             --public-access off
 
-          SAS_TOKEN=$(az storage container generate-sas \
-            --name "$CONTAINER" \
-            --account-name "$SA" \
-            --account-key "$SA_KEY" \
-            --permissions "rlwcd" \
-            --expiry "2026-12-31" \
-            --https-only \
-            --output tsv)
-
-          if [ -z "$SAS_TOKEN" ]; then
-            echo "Erro: SAS_TOKEN está vazio. Verifique permissões do SP no Storage Account."
-            exit 1
-          fi
-
-          echo "::add-mask::$SAS_TOKEN"
           echo "tf_rg=$RG" >> $GITHUB_OUTPUT
           echo "tf_sa=$SA" >> $GITHUB_OUTPUT
           echo "tf_container=$CONTAINER" >> $GITHUB_OUTPUT
-          echo "sas_token=$SAS_TOKEN" >> $GITHUB_OUTPUT
 
   # =====================================================
   # 2. NETWORK
@@ -126,7 +111,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=network.tfstate" \
-            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -backend-config="sas_token=${{ env.TF_BACKEND_SAS_TOKEN }}" \
             -reconfigure \
             -input=false
 
@@ -158,7 +143,7 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=acr.tfstate" \
-            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -backend-config="sas_token=${{ env.TF_BACKEND_SAS_TOKEN }}" \
             -reconfigure \
             -input=false
 
@@ -190,18 +175,18 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=aks.tfstate" \
-            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -backend-config="sas_token=${{ env.TF_BACKEND_SAS_TOKEN }}" \
             -reconfigure \
             -input=false
 
       - name: Terraform Plan - AKS
         working-directory: infraestructure/03-aks
-        run: terraform plan -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -input=false
+        run: terraform plan -input=false
 
       - name: Terraform Apply - AKS
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/03-aks
-        run: terraform apply -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -auto-approve -input=false
+        run: terraform apply -auto-approve -input=false
 
   # =====================================================
   # 5. DATABASE
@@ -209,48 +194,10 @@ jobs:
   database:
     runs-on: ubuntu-latest
     needs: [setup, network]
-    if: success()
 
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
-
-      - name: Azure Login for Resource Query
-        run: |
-          az login \
-            --service-principal \
-            --username "${{ secrets.ARM_CLIENT_ID }}" \
-            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.ARM_TENANT_ID }}"
-
-          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
-
-      - name: Get Network IDs from Azure
-        run: |
-          # Nomes baseados no main.tf e terraform.tfvars do 01-network
-          RG_NETWORK="rg-network-dev"  # Resource Group
-          VNET_NAME="vnet"             # VNet name (de var.vnet_name = "vnet")
-          SUBNET_NAME="snet-dev-devops-database"  # Subnet name (de locals)
-
-          VNET_ID=$(az network vnet show \
-            --resource-group "$RG_NETWORK" \
-            --name "$VNET_NAME" \
-            --query id -o tsv)
-
-          DATABASE_SUBNET_ID=$(az network vnet subnet show \
-            --resource-group "$RG_NETWORK" \
-            --vnet-name "$VNET_NAME" \
-            --name "$SUBNET_NAME" \
-            --query id -o tsv)
-
-          # Verifique se os IDs foram obtidos
-          if [ -z "$VNET_ID" ] || [ -z "$DATABASE_SUBNET_ID" ]; then
-            echo "Erro: Não foi possível obter VNET_ID ou DATABASE_SUBNET_ID. Verifique se o job network criou os recursos."
-            exit 1
-          fi
-
-          echo "VNET_ID=$VNET_ID" >> $GITHUB_ENV
-          echo "DATABASE_SUBNET_ID=$DATABASE_SUBNET_ID" >> $GITHUB_ENV
 
       - name: Terraform Init - Database
         working-directory: infraestructure/05-database
@@ -260,66 +207,18 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=database.tfstate" \
-            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -backend-config="sas_token=${{ env.TF_BACKEND_SAS_TOKEN }}" \
             -reconfigure \
             -input=false
 
       - name: Terraform Plan - Database
         working-directory: infraestructure/05-database
-        run: |
-          terraform plan \
-            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="location=eastus" \
-            -var="environment=dev" \
-            -var="resource_group_name=rg-database-dev" \
-            -var="vnet_id=$VNET_ID" \
-            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
-            -var="db_name=psql-devops" \
-            -var="postgres_version=15" \
-            -var="sku_name=B_Standard_B1ms" \
-            -var="storage_mb=32768" \
-            -var="backup_retention_days=7" \
-            -var="geo_redundant_backup_enabled=false" \
-            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
-            -var="charset=UTF8" \
-            -var="collation=en_US.utf8" \
-            -var="zone=1" \
-            -var="high_availability_mode=Disabled" \
-            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -input=false
+        run: terraform plan -input=false
 
       - name: Terraform Apply - Database
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/05-database
-        run: |
-          terraform apply \
-            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="location=eastus" \
-            -var="environment=dev" \
-            -var="resource_group_name=rg-database-dev" \
-            -var="vnet_id=$VNET_ID" \
-            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
-            -var="db_name=psql-devops" \
-            -var="postgres_version=15" \
-            -var="sku_name=B_Standard_B1ms" \
-            -var="storage_mb=32768" \
-            -var="backup_retention_days=7" \
-            -var="geo_redundant_backup_enabled=false" \
-            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
-            -var="charset=UTF8" \
-            -var="collation=en_US.utf8" \
-            -var="zone=1" \
-            -var="high_availability_mode=Disabled" \
-            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -auto-approve -input=false
+        run: terraform apply -auto-approve -input=false
 
   # =====================================================
   # 6. BASTION
@@ -340,38 +239,18 @@ jobs:
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=bastion.tfstate" \
-            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -backend-config="sas_token=${{ env.TF_BACKEND_SAS_TOKEN }}" \
             -reconfigure \
             -input=false
 
       - name: Terraform Plan - Bastion
         working-directory: infraestructure/04-bastion
-        run: |
-          terraform plan \
-            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
-            -var="bastion_subnet_id=${{ needs.network.outputs.bastion_subnet_id }}" \
-            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_address_prefixes[0] }}" \
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -input=false
+        run: terraform plan -input=false
 
       - name: Terraform Apply - Bastion
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/04-bastion
-        run: |
-          terraform apply \
-            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
-            -var="bastion_subnet_id=${{ needs.network.outputs.bastion_subnet_id }}" \
-            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_address_prefixes[0] }}" \
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -auto-approve -input=false
+        run: terraform apply -auto-approve -input=false
 
   # =====================================================
   # 7. DEPLOY APP/K8S
