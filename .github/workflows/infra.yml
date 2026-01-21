@@ -176,7 +176,7 @@ jobs:
   # =====================================================
   aks:
     runs-on: ubuntu-latest
-    needs: [network, acr]
+    needs: [setup, network, acr]
 
     steps:
       - uses: actions/checkout@v4
@@ -196,12 +196,12 @@ jobs:
 
       - name: Terraform Plan - AKS
         working-directory: infraestructure/03-aks
-        run: terraform plan -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -input=false
+        run: terraform plan -input=false
 
       - name: Terraform Apply - AKS
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/03-aks
-        run: terraform apply -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" -auto-approve -input=false
+        run: terraform apply -auto-approve -input=false
 
   # =====================================================
   # 5. DATABASE
