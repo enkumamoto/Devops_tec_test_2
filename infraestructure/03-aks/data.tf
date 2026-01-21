@@ -4,10 +4,11 @@ data "terraform_remote_state" "network" {
   backend = "azurerm"
 
   config = {
-    resource_group_name  = "__TF_BACKEND_RESOURCE_GROUP__"
-    storage_account_name = "__TF_BACKEND_STORAGE_ACCOUNT__"
-    container_name       = "__TF_BACKEND_CONTAINER__"
+    resource_group_name  = var.tf_backend_resource_group
+    storage_account_name = var.tf_backend_storage_account
+    container_name       = var.tf_backend_container
     key                  = "network.tfstate"
+    sas_token            = var.tf_backend_sas_token
   }
 }
 
@@ -15,9 +16,10 @@ data "terraform_remote_state" "acr" {
   backend = "azurerm"
 
   config = {
-    resource_group_name  = "__TF_BACKEND_RESOURCE_GROUP__"
-    storage_account_name = "__TF_BACKEND_STORAGE_ACCOUNT__"
-    container_name       = "__TF_BACKEND_CONTAINER__"
+    resource_group_name  = var.tf_backend_resource_group
+    storage_account_name = var.tf_backend_storage_account
+    container_name       = var.tf_backend_container
     key                  = "acr.tfstate"
+    sas_token            = var.tf_backend_sas_token
   }
 }
