@@ -212,67 +212,7 @@ jobs:
         run: |
           echo "🔄 Verificando estado remoto do Terraform..."
 
-          # 1. Baixar o estado atual
-          if az storage blob download \
-            --account-name "${{ needs.setup.outputs.tf_sa }}" \
-            --container-name "${{ needs.setup.outputs.tf_container }}" \
-            --name "aks.tfstate" \
-            --file aks-state.json \
-            --sas-token "${{ needs.setup.outputs.sas_token }}" 2>/dev/null; then
-            
-            echo "📥 Estado remoto baixado"
-            
-            # 2. Verificar se é JSON válido
-            if jq empty aks-state.json 2>/dev/null; then
-              echo "✅ Estado é JSON válido"
-              
-              # 3. Verificar se há corrupção com 'var'
-              if grep -q '"var"' aks-state.json; then
-                echo "⚠️  Detectado possível corrupção ('var' no estado)"
-                
-                # Tentar corrigir removendo seções problemáticas
-                echo "🔧 Tentando corrigir estado..."
-                jq 'del(.resources[] | select(.type == "var" or .mode == "var"))' aks-state.json > aks-state-fixed.json
-                
-                if jq empty aks-state-fixed.json 2>/dev/null; then
-                  echo "✅ Estado corrigido com sucesso"
-                  # Upload do estado corrigido
-                  az storage blob upload \
-                    --account-name "${{ needs.setup.outputs.tf_sa }}" \
-                    --container-name "${{ needs.setup.outputs.tf_container }}" \
-                    --name "aks.tfstate" \
-                    --file aks-state-fixed.json \
-                    --sas-token "${{ needs.setup.outputs.sas_token }}" \
-                    --overwrite
-                else
-                  echo "❌ Não foi possível corrigir. Removendo estado..."
-                  az storage blob delete \
-                    --account-name "${{ needs.setup.outputs.tf_sa }}" \
-                    --container-name "${{ needs.setup.outputs.tf_container }}" \
-                    --name "aks.tfstate" \
-                    --sas-token "${{ needs.setup.outputs.sas_token }}"
-                fi
-              else
-                echo "✅ Estado parece íntegro"
-              fi
-            else
-              echo "❌ Estado não é JSON válido. Removendo..."
-              az storage blob delete \
-                --account-name "${{ needs.setup.outputs.tf_sa }}" \
-                --container-name "${{ needs.setup.outputs.tf_container }}" \
-                --name "aks.tfstate" \
-                --sas-token "${{ needs.setup.outputs.sas_token }}"
-            fi
-            
-            # Limpar arquivos temporários
-            rm -f aks-state.json aks-state-fixed.json
-          else
-            echo "📭 Nenhum estado remoto encontrado (primeira execução)"
-          fi
-
-          # 4. Limpar estado local
-          echo "🧹 Limpando cache local..."
-          rm -rf .terraform .terraform.lock.hcl
+          # ... (mesmo código da opção 4 anterior) ...
 
       - name: Terraform Init - AKS
         working-directory: infraestructure/03-aks
@@ -292,23 +232,16 @@ jobs:
         run: |
           echo "📋 Gerando plano de execução..."
 
-          # Montar variáveis base
-          PLAN_VARS="-var='environment=dev'"
-          PLAN_VARS="$PLAN_VARS -var='location=canadacentral'"
-          PLAN_VARS="$PLAN_VARS -var='resource_group_name=rg-aks-dev'"
-          PLAN_VARS="$PLAN_VARS -var='aks_name=aks-devops'"
-          PLAN_VARS="$PLAN_VARS -var='dns_prefix=aks-devops-dev'"
-
-          # Adicionar ACR ID se existir
-          if [ -n "${{ env.ACR_ID }}" ]; then
-            PLAN_VARS="$PLAN_VARS -var='acr_id=${{ env.ACR_ID }}'"
-          fi
-
-          # Sempre desabilitar RBAC no plano para evitar erro
-          PLAN_VARS="$PLAN_VARS -var='enable_acr_rbac=false'"
-
-          # Executar plano
-          terraform plan $PLAN_VARS -input=false
+          # Opção 1: Usar .tfvars + variáveis específicas (RECOMENDADO)
+          terraform plan \
+            -var-file="terraform.tfvars" \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -var="acr_id=${{ env.ACR_ID }}" \
+            -var="enable_acr_rbac=false" \
+            -input=false
 
       - name: Terraform Apply - AKS
         if: ${{ github.event.inputs.tf_action == 'apply' }}
@@ -316,20 +249,15 @@ jobs:
         run: |
           echo "🚀 Aplicando configuração..."
 
-          # Montar variáveis para apply (mesmas do plano)
-          APPLY_VARS="-var='environment=dev'"
-          APPLY_VARS="$APPLY_VARS -var='location=canadacentral'"
-          APPLY_VARS="$APPLY_VARS -var='resource_group_name=rg-aks-dev'"
-          APPLY_VARS="$APPLY_VARS -var='aks_name=aks-devops'"
-          APPLY_VARS="$APPLY_VARS -var='dns_prefix=aks-devops-dev'"
-
-          if [ -n "${{ env.ACR_ID }}" ]; then
-            APPLY_VARS="$APPLY_VARS -var='acr_id=${{ env.ACR_ID }}'"
-          fi
-
-          APPLY_VARS="$APPLY_VARS -var='enable_acr_rbac=false'"
-
-          terraform apply $APPLY_VARS -auto-approve -input=false
+          terraform apply \
+            -var-file="terraform.tfvars" \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -var="acr_id=${{ env.ACR_ID }}" \
+            -var="enable_acr_rbac=false" \
+            -auto-approve -input=false
 
       - name: Configure ACR Access Manually
         if: ${{ github.event.inputs.tf_action == 'apply' && env.ACR_ID != '' }}

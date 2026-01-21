@@ -7,7 +7,7 @@ tags = {
   ManagedBy   = "Terraform"
 }
 
-resource_group_name = "aks"
+resource_group_name = "rg-aks-dev"
 
 aks_name   = "aks-devops-dev"
 dns_prefix = "aks-devops"
