@@ -18,7 +18,7 @@ system_node_pool_name = "system"
 
 node_vm_size = "Standard_DS2_v2"
 
-min_node_count = 1
+min_node_count = 2
 max_node_count = 3
 
 aks_subnet_id = ""
