@@ -115,10 +115,9 @@ output "module_summary" {
 output "local_values" {
   description = "Local values computed for this module"
   value = {
-    naming_prefix   = local.naming_prefix
-    vnet_name       = local.vnet_name
-    subnet_names    = local.subnet_names
-    deployment_time = local.timestamp
+    naming_prefix = local.naming_prefix
+    vnet_name     = local.vnet_name
+    subnet_names  = local.subnet_names
   }
   sensitive = false
 }
