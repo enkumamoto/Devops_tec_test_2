@@ -50,7 +50,7 @@ resource "azurerm_container_app" "fastapi" {
     }
   }
 
-  depends_on = [data.azurerm_resource_group.aca]
+  depends_on = [azurerm_resource_group.aca]
 
   tags = var.tags
 }

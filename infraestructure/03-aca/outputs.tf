@@ -38,7 +38,7 @@ output "resource_group_name" {
 
 output "resource_group_id" {
   description = "The ID of the Resource Group"
-  value       = data.azurerm_resource_group.aca.id
+  value       = azurerm_resource_group.aca.id
 }
 
 # ============================
