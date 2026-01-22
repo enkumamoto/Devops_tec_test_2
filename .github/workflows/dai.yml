@@ -1,5 +1,4 @@
-name: Destroy Azure Infrastructure (ACA)
-
+name: Destroy Azure Infrastructure
 on:
   workflow_dispatch:
     inputs:
