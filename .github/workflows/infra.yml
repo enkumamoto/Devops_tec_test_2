@@ -199,14 +199,14 @@ jobs:
         run: |
           echo "🔧 Registrando providers Azure necessários..."
 
-          for provider in \
-            Microsoft.App \
-            Microsoft.Web \
-            Microsoft.ContainerRegistry \
-            Microsoft.OperationalInsights
-          do
-            az provider register --namespace $provider --wait
-          done
+          # Registrar providers em paralelo quando possível
+          az provider register --namespace Microsoft.App --wait &
+          az provider register --namespace Microsoft.Web --wait &
+          az provider register --namespace Microsoft.ContainerRegistry --wait &
+          az provider register --namespace Microsoft.OperationalInsights --wait &
+
+          wait
+          echo "✅ Todos os providers registrados"
 
       - name: Get ACR Login Server
         id: get_acr
@@ -223,6 +223,8 @@ jobs:
 
       - name: Terraform Init - ACA
         working-directory: infraestructure/03-aca
+        env:
+          TF_CLI_ARGS: "-input=false"
         run: |
           terraform init \
             -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
@@ -230,23 +232,15 @@ jobs:
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=aca.tfstate" \
             -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -reconfigure -input=false
+            -reconfigure
 
-      - name: Terraform Import Key Vault Access Policy
+      - name: Cache Service Principal Object ID
+        id: cache_sp_id
         working-directory: infraestructure/03-aca
-        shell: bash
-        env:
-          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
         run: |
-          set -e
-
-          KEY_VAULT_NAME="eiji-kv-aca-dev"
-          RESOURCE_GROUP="rg-aca-dev"
-
-          echo "Resolving Service Principal Object ID..."
+          echo "🔍 Obtendo Object ID do Service Principal..."
           OBJECT_ID=$(az ad sp list \
-            --filter "appId eq '$ARM_CLIENT_ID'" \
+            --filter "appId eq '${{ secrets.ARM_CLIENT_ID }}'" \
             --query "[0].id" \
             -o tsv)
 
@@ -256,82 +250,127 @@ jobs:
           fi
 
           echo "✅ Object ID: $OBJECT_ID"
+          echo "sp_object_id=$OBJECT_ID" >> $GITHUB_ENV
+          echo "SP_OBJECT_ID=$OBJECT_ID" >> $GITHUB_OUTPUT
 
-          POLICY_ID="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${KEY_VAULT_NAME}/objectId/${OBJECT_ID}"
-
-          echo "🔄 Removendo lock existente..."
-          # Forçar remoção do lock específico
-          terraform force-unlock -force e8c5a141-d249-8be6-806a-df2d88d50317 2>/dev/null || \
-            echo "⚠️ Lock não encontrado ou já removido"
-
-          # Tentar remover qualquer lock que possa existir
-          terraform force-unlock -force $(terraform workspace show) 2>/dev/null || true
-
-          echo "🔄 Verificando se policy já está no estado..."
-          if terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1; then
-            echo "✅ Access policy já está gerenciado pelo Terraform"
-          else
-            echo "🔄 Importando policy..."
-            
-            # Tentar import normal primeiro
-            if terraform import azurerm_key_vault_access_policy.terraform "$POLICY_ID" 2>&1 | grep -q "state lock"; then
-              echo "⚠️ Lock detectado, usando -lock=false..."
-              terraform import -lock=false azurerm_key_vault_access_policy.terraform "$POLICY_ID"
-            fi
-            
-            echo "✅ Import realizado com sucesso"
-          fi
-
-      - name: Terraform Plan - ACA
+      - name: Quick Terraform Import - Key Vault Policy
         working-directory: infraestructure/03-aca
-        shell: bash
+        timeout-minutes: 3
+        env:
+          TF_CLI_ARGS: "-input=false -lock-timeout=30s"
         run: |
           set -e
 
-          echo "Running terraform plan..."
-          PLAN_OUTPUT=$(terraform plan \
-            -var="environment=dev" \
-            -var="location=canadacentral" \
-            -var="resource_group_name=rg-aca-dev" \
-            -var="acr_login_server=${{ env.ACR_LOGIN_SERVER }}" \
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -input=false 2>&1) || true
+          KEY_VAULT_NAME="eiji-kv-aca-dev"
+          RESOURCE_GROUP="rg-aca-dev"
 
-          echo "$PLAN_OUTPUT"
+          echo "🔄 Importando política de acesso..."
 
-          if echo "$PLAN_OUTPUT" | grep -q "Error acquiring the state lock"; then
-            echo "State lock detected. Extracting lock ID..."
+          POLICY_ID="/subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${KEY_VAULT_NAME}/objectId/${{ env.sp_object_id }}"
 
-            LOCK_ID=$(echo "$PLAN_OUTPUT" | grep -Eo 'ID:\s+[a-z0-9\-]+' | awk '{print $2}')
-
-            if [ -z "$LOCK_ID" ]; then
-              echo "Failed to extract lock ID"
-              exit 1
+          # Tentativa rápida com retry
+          for i in {1..2}; do
+            echo "Tentativa $i..."
+            if terraform import -compact-warnings azurerm_key_vault_access_policy.terraform "$POLICY_ID" 2>/dev/null; then
+              echo "✅ Import bem-sucedido"
+              exit 0
             fi
+            
+            if [ $i -eq 1 ]; then
+              echo "🔄 Primeira tentativa falhou, limpando lock..."
+              terraform force-unlock -force $(terraform workspace show) 2>/dev/null || true
+              sleep 2
+            fi
+          done
 
-            echo "Force unlocking state with ID: $LOCK_ID"
-            terraform force-unlock -force "$LOCK_ID"
+          echo "⚠️ Import falhou após 2 tentativas rápidas"
+          echo "Verificando se já existe no estado..."
 
-            echo "Re-running terraform plan..."
-            terraform plan \
-              -var="environment=dev" \
-              -var="location=canadacentral" \
-              -var="resource_group_name=rg-aca-dev" \
-              -var="acr_login_server=${{ env.ACR_LOGIN_SERVER }}" \
-              -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-              -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-              -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-              -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-              -input=false
-          fi
-
-      - name: Terraform Apply - ACA
-        if: ${{ github.event.inputs.tf_action == 'apply' }}
+      - name: Verify Import Status
+        if: always()
         working-directory: infraestructure/03-aca
         run: |
+          echo "📋 Verificando status do import..."
+
+          # Verifica se a policy está no estado
+          if terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1; then
+            echo "✅ Policy já está gerenciada pelo Terraform"
+            echo "POLICY_IMPORTED=true" >> $GITHUB_ENV
+          else
+            echo "ℹ️ Policy não encontrada no estado"
+            echo "POLICY_IMPORTED=false" >> $GITHUB_ENV
+            
+            # Lista políticas existentes para debug
+            echo "Políticas no Key Vault:"
+            terraform state list | grep -i key_vault || echo "Nenhuma política encontrada"
+          fi
+
+      - name: Terraform Plan - ACA (Otimizado)
+        working-directory: infraestructure/03-aca
+        env:
+          TF_CLI_ARGS: "-input=false -lock-timeout=1m"
+        run: |
+          set -e
+
+          echo "📋 Executando terraform plan..."
+
+          # Variáveis comuns
+          COMMON_VARS="-var='environment=dev' \
+            -var='location=canadacentral' \
+            -var='resource_group_name=rg-aca-dev' \
+            -var='acr_login_server=${{ env.ACR_LOGIN_SERVER }}' \
+            -var='tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}' \
+            -var='tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}' \
+            -var='tf_backend_container=${{ needs.setup.outputs.tf_container }}' \
+            -var='tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}'"
+
+          # Executar plan com tratamento de erro
+          terraform plan $COMMON_VARS -detailed-exitcode 2>&1 | tee plan_output.txt
+
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+
+          case $PLAN_EXIT_CODE in
+            0)
+              echo "✅ Nenhuma mudança necessária"
+              ;;
+            1)
+              echo "❌ Erro no plan"
+              exit 1
+              ;;
+            2)
+              echo "📝 Mudanças detectadas"
+              echo "CHANGES_DETECTED=true" >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Handle Terraform Lock (Fallback)
+        if: failure() && contains(steps.plan.outcome, 'failure')
+        working-directory: infraestructure/03-aca
+        run: |
+          echo "🔓 Tratando problema de lock..."
+
+          # Extrair lock ID do erro anterior
+          if [ -f plan_output.txt ]; then
+            LOCK_ID=$(grep -Eo 'ID:\s+[a-z0-9\-]+' plan_output.txt | awk '{print $2}' | head -1)
+            
+            if [ -n "$LOCK_ID" ]; then
+              echo "Removendo lock: $LOCK_ID"
+              terraform force-unlock -force "$LOCK_ID"
+            fi
+          fi
+
+          # Remover qualquer lock
+          terraform force-unlock -force $(terraform workspace show) 2>/dev/null || true
+          echo "✅ Locks removidos"
+
+      - name: Terraform Apply - ACA (Condicional)
+        if: github.event.inputs.tf_action == 'apply' && env.CHANGES_DETECTED == 'true'
+        working-directory: infraestructure/03-aca
+        env:
+          TF_CLI_ARGS: "-input=false -auto-approve"
+        run: |
+          echo "🚀 Aplicando mudanças..."
+
           terraform apply \
             -var="environment=dev" \
             -var="location=canadacentral" \
@@ -340,9 +379,14 @@ jobs:
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -auto-approve -input=false
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}"
 
+          echo "✅ Aplicação concluída"
+
+      - name: Skip Apply (No Changes)
+        if: github.event.inputs.tf_action == 'apply' && env.CHANGES_DETECTED != 'true'
+        run: |
+          echo "⏭️ Nenhuma mudança detectada - apply não necessário"
   # =====================================================
   # 5. DATABASE
   # =====================================================
