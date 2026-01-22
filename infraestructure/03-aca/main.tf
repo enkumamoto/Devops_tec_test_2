@@ -16,14 +16,15 @@ resource "azurerm_log_analytics_workspace" "aca" {
   tags = var.tags
 }
 
-# Container Apps Environment (substitui o cluster AKS)
+# Container Apps Environment
 resource "azurerm_container_app_environment" "devops" {
   name                       = "cae-${var.environment}"
   location                   = var.location
   resource_group_name        = azurerm_resource_group.aca.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.aca.id
 
-  infrastructure_subnet_id = data.terraform_remote_state.network.outputs.aca_subnet_id
+  infrastructure_subnet_id       = data.azurerm_subnet.aca.id
+  internal_load_balancer_enabled = true
 
   tags = var.tags
 }

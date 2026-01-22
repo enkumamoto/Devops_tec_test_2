@@ -22,11 +22,6 @@ resource "azurerm_subnet" "aca" {
     "Microsoft.Storage"
   ]
 
-  lifecycle {
-    create_before_destroy = true
-    #ignore_changes        = [tags["LastModified"]]
-  }
-
   depends_on = [azurerm_virtual_network.devops]
 }
 
