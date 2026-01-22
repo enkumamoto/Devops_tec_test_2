@@ -196,24 +196,42 @@ jobs:
             --tenant "${{ secrets.ARM_TENANT_ID }}"
           az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
-      - name: Import existing Key Vault state resources
+      - name: Import existing Key Vault state resources (dynamic)
         working-directory: infraestructure/03-aks
         run: |
-          terraform import azurerm_key_vault_access_policy.terraform \
-            /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/rg-aks-dev/providers/Microsoft.KeyVault/vaults/kv-aks-devops-dev/objectId/afd26dc2-fc50-4d82-a531-f172d5b2f731
+          # Variáveis base
+          SUBSCRIPTION_ID="${{ secrets.ARM_SUBSCRIPTION_ID }}"
+          RESOURCE_GROUP="rg-aks-dev"
+          KEYVAULT_NAME="kv-aks-devops-dev"
+          CLIENT_ID="${{ secrets.ARM_CLIENT_ID }}"
 
-          terraform import azurerm_key_vault_secret.postgresql_host \
-            "https://kv-aks-devops-dev.vault.azure.net/secrets/postgresql-host/b04c21d46aa9415ca9d9cf8e24bef946"
+          echo "🔎 Obtendo ObjectID do KV para policy Terraform"
+          OBJECT_ID=$(az keyvault show --name "$KEYVAULT_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.accessPolicies[?applicationId=='$CLIENT_ID'].objectId | [0]" -o tsv)
 
-          terraform import azurerm_key_vault_secret.postgresql_username \
-            "https://kv-aks-devops-dev.vault.azure.net/secrets/postgresql-username/ec7ca2acd5b247a4a548352a61104272"
+          if [ -z "$OBJECT_ID" ]; then
+            echo "⚠️ ObjectID não encontrado"
+          else
+            terraform import azurerm_key_vault_access_policy.terraform "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.KeyVault/vaults/$KEYVAULT_NAME/objectId/$OBJECT_ID"
+          fi
 
-          terraform import azurerm_key_vault_secret.postgresql_password \
-            "https://kv-aks-devops-dev.vault.azure.net/secrets/postgresql-password/3975357d89634b23913d73399321d440"
+          SECRET_NAMES=(
+            "postgresql-host"
+            "postgresql-username"
+            "postgresql-password"
+            "app-secret-key"
+          )
 
-          terraform import azurerm_key_vault_secret.app_secret_key \
-            "https://kv-aks-devops-dev.vault.azure.net/secrets/app-secret-key/ebf279233f204e12b0e67b749b114474"
-
+          for SECRET_NAME in "${SECRET_NAMES[@]}"; do
+            echo "🔎 Buscando segredo $SECRET_NAME"
+            SECRET_ID=$(az keyvault secret show --vault-name "$KEYVAULT_NAME" --name "$SECRET_NAME" --query "id" -o tsv || echo "")
+            if [ -z "$SECRET_ID" ]; then
+              echo "⚠️ Segredo $SECRET_NAME não encontrado"
+            else
+              # Substituir hífen por underscore para referência correta no Terraform
+              TF_RESOURCE_NAME=${SECRET_NAME//-/_}
+              terraform import "azurerm_key_vault_secret.${TF_RESOURCE_NAME}" "$SECRET_ID" || echo "⚠️ Import falhou para $SECRET_NAME"
+            fi
+          done
       - name: Check and Force Unlock Terraform State (Dynamic Unlock ID)
         run: |
           echo "🔍 Verificando lock no estado Terraform..."
@@ -523,6 +541,12 @@ jobs:
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
             -input=false
+
+      - name: Debug Bastion Subnet ID
+        run: |
+          echo "Bastion Subnet ID recebido: '${{ needs.network.outputs.bastion_subnet_id }}'"
+        outputs:
+        bastion_subnet_id: ${{ steps.terraform.outputs.bastion_subnet_id }}
 
       - name: Terraform Apply - Bastion
         if: ${{ github.event.inputs.tf_action == 'apply' }}

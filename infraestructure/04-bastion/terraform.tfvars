@@ -32,3 +32,5 @@ tags = {
   ManagedBy   = "Terraform"
   Owner       = "Platform"
 }
+
+bastion_subnet_id = ""
