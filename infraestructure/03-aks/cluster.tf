@@ -31,7 +31,7 @@ resource "azurerm_kubernetes_cluster" "devops" {
     network_policy = "azure"
   }
 
-  private_cluster_enabled           = true
+  private_cluster_enabled           = false
   role_based_access_control_enabled = true
 
   tags = var.tags

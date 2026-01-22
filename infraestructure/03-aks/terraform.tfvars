@@ -9,7 +9,7 @@ tags = {
 
 resource_group_name = "rg-aks-dev"
 
-aks_name   = "aks-devops-dev"
+aks_name   = "aks-devops"
 dns_prefix = "aks-devops"
 
 kubernetes_version = "1.33.5"

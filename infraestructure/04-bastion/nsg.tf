@@ -10,7 +10,7 @@ resource "azurerm_network_security_group" "bastion" {
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
-    source_address_prefix      = "*" # Permite de qualquer IP externo
+    source_address_prefix      = "162.120.186.87" # Permite de qualquer IP externo
     source_port_range          = "*"
     destination_address_prefix = "*"  # Aplica à VM bastion (ou ajuste se necessário)
     destination_port_range     = "22" # Porta SSH
