@@ -235,9 +235,12 @@ jobs:
 
       - name: Terraform Plan - ACA
         working-directory: infraestructure/03-aca
+        shell: bash
         run: |
-          terraform plan || terraform force-unlock -force $(terraform show -json | jq -r '.lock.id')
-          terraform plan \
+          set -e
+
+          echo "Running terraform plan..."
+          PLAN_OUTPUT=$(terraform plan \
             -var="environment=dev" \
             -var="location=canadacentral" \
             -var="resource_group_name=rg-aca-dev" \
@@ -246,7 +249,35 @@ jobs:
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -input=false
+            -input=false 2>&1) || true
+
+          echo "$PLAN_OUTPUT"
+
+          if echo "$PLAN_OUTPUT" | grep -q "Error acquiring the state lock"; then
+            echo "State lock detected. Extracting lock ID..."
+
+            LOCK_ID=$(echo "$PLAN_OUTPUT" | grep -Eo 'ID:\s+[a-z0-9\-]+' | awk '{print $2}')
+
+            if [ -z "$LOCK_ID" ]; then
+              echo "Failed to extract lock ID"
+              exit 1
+            fi
+
+            echo "Force unlocking state with ID: $LOCK_ID"
+            terraform force-unlock -force "$LOCK_ID"
+
+            echo "Re-running terraform plan..."
+            terraform plan \
+              -var="environment=dev" \
+              -var="location=canadacentral" \
+              -var="resource_group_name=rg-aca-dev" \
+              -var="acr_login_server=${{ env.ACR_LOGIN_SERVER }}" \
+              -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+              -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+              -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+              -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+              -input=false
+          fi
 
       - name: Terraform Apply - ACA
         if: ${{ github.event.inputs.tf_action == 'apply' }}
