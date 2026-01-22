@@ -245,17 +245,23 @@ jobs:
           RESOURCE_GROUP="rg-aca-dev"
 
           echo "Resolving Service Principal Object ID..."
-          OBJECT_ID=$(az ad sp list \
-            --filter "appId eq '$ARM_CLIENT_ID'" \
-            --query "[0].id" \
+
+          # Método recomendado - mais simples e direto
+          OBJECT_ID=$(az ad sp show \
+            --id "$ARM_CLIENT_ID" \
+            --query "id" \
             -o tsv)
 
           if [ -z "$OBJECT_ID" ]; then
             echo "❌ Failed to resolve Service Principal Object ID"
+            echo "ARM_CLIENT_ID: $ARM_CLIENT_ID"
             exit 1
           fi
 
+          echo "Object ID resolved: $OBJECT_ID"
+
           POLICY_ID="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${KEY_VAULT_NAME}/objectId/${OBJECT_ID}"
+          echo "Policy ID for import: $POLICY_ID"
 
           echo "Checking if access policy already exists in Terraform state..."
           if ! terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1; then
