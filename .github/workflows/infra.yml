@@ -244,42 +244,51 @@ jobs:
           KEY_VAULT_NAME="eiji-kv-aca-dev"
           RESOURCE_GROUP="rg-aca-dev"
 
-          echo "=== Diagnóstico ==="
-          echo "ARM_CLIENT_ID: $ARM_CLIENT_ID"
-
-          # Tentativa 1: Service Principal
-          echo "Tentando como Service Principal..."
-          SP_OBJECT_ID=$(az ad sp list \
+          echo "Resolving Service Principal Object ID..."
+          OBJECT_ID=$(az ad sp list \
             --filter "appId eq '$ARM_CLIENT_ID'" \
             --query "[0].id" \
-            -o tsv 2>/dev/null || true)
+            -o tsv)
 
-          if [ -n "$SP_OBJECT_ID" ]; then
-            echo "✅ Encontrado como Service Principal: $SP_OBJECT_ID"
-            OBJECT_ID="$SP_OBJECT_ID"
-          else
-            echo "❌ Não é Service Principal"
-            
-            # Tentativa 2: Verificar se é um Object ID direto
-            if [[ "$ARM_CLIENT_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-              echo "ARM_CLIENT_ID parece ser um Object ID diretamente"
-              OBJECT_ID="$ARM_CLIENT_ID"
-            else
-              echo "❌ Não reconhecido como Object ID válido"
-              exit 1
-            fi
+          if [ -z "$OBJECT_ID" ]; then
+            echo "❌ Failed to resolve Object ID"
+            exit 1
           fi
 
-          echo "Object ID final: $OBJECT_ID"
+          echo "✅ Object ID: $OBJECT_ID"
 
           POLICY_ID="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${KEY_VAULT_NAME}/objectId/${OBJECT_ID}"
 
-          echo "Importando com Policy ID: $POLICY_ID"
+          # Função para tentar import com fallback
+          import_policy() {
+            echo "Tentando import normal..."
+            if terraform import azurerm_key_vault_access_policy.terraform "$POLICY_ID"; then
+              echo "✅ Import realizado com sucesso"
+              return 0
+            fi
+            
+            # Se falhar por lock, tentar com lock=false
+            if [ $? -eq 1 ]; then
+              echo "🔄 Tentando com lock desabilitado..."
+              if terraform import -lock=false azurerm_key_vault_access_policy.terraform "$POLICY_ID"; then
+                echo "✅ Import realizado com -lock=false"
+                return 0
+              fi
+            fi
+            
+            return 1
+          }
 
-          if ! terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1; then
-            terraform import azurerm_key_vault_access_policy.terraform "$POLICY_ID"
+          # Verificar se já existe no estado
+          if terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1; then
+            echo "✅ Access policy já está gerenciado pelo Terraform"
           else
-            echo "Access policy already managed by Terraform"
+            echo "🔄 Importando policy..."
+            if ! import_policy; then
+              echo "❌ Falha no import após todas as tentativas"
+              echo "Dica: Execute manualmente: terraform force-unlock e8c5a141-d249-8be6-806a-df2d88d50317"
+              exit 1
+            fi
           fi
 
       - name: Terraform Plan - ACA
