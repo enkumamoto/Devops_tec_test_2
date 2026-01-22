@@ -47,6 +47,8 @@ resource "azurerm_key_vault_access_policy" "aks" {
   certificate_permissions = [
     "Get", "List"
   ]
+
+
 }
 
 # Access Policy para o Service Principal do Terraform
@@ -67,15 +69,6 @@ resource "azurerm_key_vault_access_policy" "terraform" {
     "Get", "List", "Create", "Delete", "Update", "Import", "Backup", "Restore", "ManageContacts", "ManageIssuers", "GetIssuers", "ListIssuers", "SetIssuers", "DeleteIssuers"
   ]
 
-  # lifecycle {
-  #   ignore_changes = [
-  #     certificate_permissions,
-  #     key_permissions,
-  #     secret_permissions,
-  #     object_id,
-  #     tenant_id,
-  #   ]
-  # }
 }
 
 resource "azurerm_key_vault_secret" "postgresql_host" {

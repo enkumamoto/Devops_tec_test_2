@@ -41,4 +41,6 @@ resource "azurerm_kubernetes_cluster" "devops" {
       kubernetes_version
     ]
   }
+
+  depends_on = [azurerm_resource_group.aks]
 }
