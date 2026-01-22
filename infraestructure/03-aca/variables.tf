@@ -5,7 +5,6 @@
 variable "environment" {
   description = "Environment name (dev, staging, prod)"
   type        = string
-  default     = "dev"
 
   validation {
     condition     = contains(["dev", "staging", "prod"], var.environment)
@@ -16,17 +15,11 @@ variable "environment" {
 variable "location" {
   description = "Azure region where ACA will be deployed"
   type        = string
-  default     = "canadacentral"
 }
 
 variable "tags" {
   description = "Tags applied to ACA resources"
   type        = map(string)
-  default = {
-    Environment = "dev"
-    Project     = "devops-test"
-    ManagedBy   = "Terraform"
-  }
 }
 
 # ============================
