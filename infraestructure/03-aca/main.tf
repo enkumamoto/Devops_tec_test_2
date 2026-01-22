@@ -1,5 +1,3 @@
-# Data source para Resource Group EXISTENTE
-# O RG será criado no módulo anterior ou já existe
 data "azurerm_resource_group" "aca" {
   name = var.resource_group_name
 }
@@ -22,7 +20,7 @@ resource "azurerm_container_app_environment" "devops" {
   resource_group_name        = data.azurerm_resource_group.aca.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.aca.id
 
-  infrastructure_subnet_id = var.aca_subnet_id != "" ? var.aca_subnet_id : null
+  infrastructure_subnet_id = local.aca_subnet_id
 
   tags = var.tags
 }

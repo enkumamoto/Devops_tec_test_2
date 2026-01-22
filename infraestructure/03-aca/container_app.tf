@@ -12,13 +12,6 @@ resource "azurerm_container_app" "fastapi" {
       cpu    = 0.5   # 0.5 vCPU (meio core)
       memory = "1Gi" # 1GB RAM
 
-      # Portas expostas
-      ports {
-        port     = 8000
-        protocol = "TCP"
-        external = true
-      }
-
       # Variáveis de ambiente
       env {
         name  = "APP_ENVIRONMENT"
