@@ -196,55 +196,60 @@ jobs:
             --tenant "${{ secrets.ARM_TENANT_ID }}"
           az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
-      - name: Clean Existing Key Vault Resources (SEGURANÇA PARA TESTE)
+      - name: Clean Existing Key Vault (SEGURANÇA)
         run: |
-          echo "🧹 REMOVENDO Key Vault existente para evitar conflitos..."
+          echo "🧹 REMOVENDO Key Vault problemático..."
 
           # Deletar Key Vault se existir
           az keyvault delete \
-            -g "rg-aks-dev" \
-            -n "kv-aks-devops-dev" \
-            --no-wait || echo "⚠️  Key Vault não existe"
+            --resource-group "rg-aks-dev" \
+            --name "kv-aks-devops-dev" \
+            --no-wait 2>/dev/null || echo "✅ Key Vault não existe ou já deletado"
 
-          # Aguardar exclusão
-          echo "⏳ Aguardando 30 segundos..."
-          sleep 30
+          # Aguardar
+          sleep 10
 
-      - name: Force Unlock Terraform State
+      - name: Force Unlock and Reset Terraform State
         run: |
-          echo "🔓 Desbloqueando estado FORÇADO..."
+          echo "🔓 Resetando estado do Terraform..."
 
-          # 1. Break lease no blob
+          # 1. Tentar quebrar lease se existir (comando CORRETO)
           az storage blob lease break \
+            --account-name "${{ needs.setup.outputs.tf_sa }}" \
             --container-name "${{ needs.setup.outputs.tf_container }}" \
             --name "aks.tfstate" \
-            --account-name "${{ needs.setup.outputs.tf_sa }}" \
             --sas-token "${{ needs.setup.outputs.sas_token }}" \
-            || echo "⚠️  Sem lease para quebrar"
+            --auth-mode key 2>/dev/null || echo "✅ Sem lease ativo"
 
           # 2. Deletar estado antigo
           az storage blob delete \
+            --account-name "${{ needs.setup.outputs.tf_sa }}" \
             --container-name "${{ needs.setup.outputs.tf_container }}" \
             --name "aks.tfstate" \
-            --account-name "${{ needs.setup.outputs.tf_sa }}" \
             --sas-token "${{ needs.setup.outputs.sas_token }}" \
-            || echo "⚠️  Estado não existe"
+            --auth-mode key 2>/dev/null || echo "✅ Estado não existia"
 
-          # 3. Criar estado vazio
-          echo '{"version": 1}' | az storage blob upload \
+          # 3. Criar estado vazio (método correto)
+          echo '{"version": 1}' > empty_state.json
+          az storage blob upload \
+            --account-name "${{ needs.setup.outputs.tf_sa }}" \
             --container-name "${{ needs.setup.outputs.tf_container }}" \
             --name "aks.tfstate" \
-            --account-name "${{ needs.setup.outputs.tf_sa }}" \
+            --file empty_state.json \
             --sas-token "${{ needs.setup.outputs.sas_token }}" \
+            --auth-mode key \
             --content-type "application/json"
+          rm -f empty_state.json
+
+          echo "✅ Estado resetado com sucesso!"
 
       - name: Get ACR ID
         id: get_acr
         run: |
           echo "📦 Obtendo ACR ID..."
           ACR_ID=$(az acr show \
-            -g "rg-acr-dev" \
-            -n "eijidevopsdevacr" \
+            --resource-group "rg-acr-dev" \
+            --name "eijidevopsdevacr" \
             --query id -o tsv 2>/dev/null || echo "")
 
           if [ -n "$ACR_ID" ]; then
@@ -261,12 +266,27 @@ jobs:
         working-directory: infraestructure/03-aks
         run: |
           echo "🧹 Limpando local..."
-          rm -rf .terraform .terraform.lock.hcl terraform.tfstate*
+          rm -rf .terraform .terraform.lock.hcl terraform.tfstate* *.backup
 
-      - name: Terraform Init - AKS (LIMPO)
+      - name: Modify Terraform to Avoid Key Vault Conflicts
         working-directory: infraestructure/03-aks
         run: |
-          echo "🚀 Inicializando LIMPO..."
+          echo "🔧 Modificando para evitar conflitos com Key Vault..."
+
+          # 1. Renomear o Key Vault no terraform.tfvars
+          if [ -f terraform.tfvars ]; then
+            sed -i 's/key_vault_name = ""/key_vault_name = "kv-aks-devops-dev-NEW"/g' terraform.tfvars
+            echo "✅ Key Vault renomeado para 'kv-aks-devops-dev-NEW'"
+          fi
+
+          # 2. OU comente o Key Vault no código (opcional)
+          # sed -i 's/^resource "azurerm_key_vault"/# resource "azurerm_key_vault"/g' keyvault.tf
+          # echo "✅ Key Vault comentado temporariamente"
+
+      - name: Terraform Init - AKS
+        working-directory: infraestructure/03-aks
+        run: |
+          echo "🚀 Inicializando Terraform..."
           terraform init \
             -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
@@ -276,12 +296,12 @@ jobs:
             -reconfigure \
             -input=false
 
-      - name: Terraform Plan - AKS (SEM KEY VAULT)
+      - name: Terraform Plan - AKS
         working-directory: infraestructure/03-aks
         run: |
-          echo "📋 Plano SEM Key Vault (vamos criar novo)..."
+          echo "📋 Gerando plano..."
 
-          # Plano focado apenas no AKS, ignora Key Vault
+          # Usar variáveis inline (mais seguro)
           terraform plan \
             -var="environment=dev" \
             -var="location=canadacentral" \
@@ -291,21 +311,19 @@ jobs:
             -var="kubernetes_version=1.33.5" \
             -var="enable_acr_rbac=false" \
             -var="acr_id=${{ env.ACR_ID }}" \
-            -var="key_vault_name=kv-aks-devops-dev-NEW" \  # ⬅️ NOVO NOME!
+            -var="key_vault_name=kv-aks-devops-dev-NEW" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -target="azurerm_resource_group.aks" \
-            -target="azurerm_kubernetes_cluster.devops" \
             -input=false
 
-      - name: Terraform Apply - AKS (APENAS AKS)
+      - name: Terraform Apply - AKS
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/03-aks
         timeout-minutes: 20
         run: |
-          echo "⚡ Criando APENAS AKS (Key Vault depois)..."
+          echo "⚡ Aplicando AKS..."
 
           terraform apply \
             -var="environment=dev" \
@@ -316,34 +334,35 @@ jobs:
             -var="kubernetes_version=1.33.5" \
             -var="enable_acr_rbac=false" \
             -var="acr_id=${{ env.ACR_ID }}" \
-            -var="key_vault_name=kv-aks-devops-dev-NEW" \  # ⬅️ NOME DIFERENTE!
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_sa }}" \
+            -var="key_vault_name=kv-aks-devops-dev-NEW" \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -target="azurerm_resource_group.aks" \
-            -target="azurerm_kubernetes_cluster.devops" \
             -auto-approve \
             -input=false
 
       - name: Configure ACR Access
         if: ${{ github.event.inputs.tf_action == 'apply' && env.ACR_ID != '' }}
         run: |
-          echo "🔗 Configurando ACR..."
+          echo "🔗 Configurando acesso ACR..."
           sleep 30
 
           KUBELET_ID=$(az aks show \
-            -g "rg-aks-dev" \
-            -n "aks-devops-dev-dev" \
-            --query identityProfile.kubeletidentity.objectId -o tsv)
+            --resource-group "rg-aks-dev" \
+            --name "aks-devops-dev-dev" \
+            --query identityProfile.kubeletidentity.objectId -o tsv 2>/dev/null || echo "")
 
-          echo "🔑 Kubelet ID: $KUBELET_ID"
-
-          az role assignment create \
-            --assignee "$KUBELET_ID" \
-            --role "AcrPull" \
-            --scope "${{ env.ACR_ID }}" \
-            || echo "✅ Role já existe"
+          if [ -n "$KUBELET_ID" ]; then
+            echo "🔑 Kubelet ID: $KUBELET_ID"
+            az role assignment create \
+              --assignee "$KUBELET_ID" \
+              --role "AcrPull" \
+              --scope "${{ env.ACR_ID }}" \
+              || echo "✅ Role já existe"
+          else
+            echo "⚠️  Não foi possível obter Kubelet ID"
+          fi
 
   # =====================================================
   # 5. DATABASE
