@@ -1,7 +1,7 @@
 # O Azure Bastion exige uma subnet com este nome exato
 resource "azurerm_subnet" "bastion_service_subnet" {
   name                 = "AzureBastionSubnet"
-  resource_group_name  = azurerm_resource_group.bastion.name
+  resource_group_name  = data.terraform_remote_state.network.outputs.resource_group_name
   virtual_network_name = data.terraform_remote_state.network.outputs.vnet_name
   address_prefixes     = ["10.0.255.0/27"] # Exemplo de range pequeno
 }
