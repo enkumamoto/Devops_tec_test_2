@@ -193,35 +193,50 @@ jobs:
             --tenant "${{ secrets.ARM_TENANT_ID }}"
           az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
-      - name: Check and Force Unlock Terraform State (Improved)
+      - name: Import existing Key Vault state resources
+        working-directory: infraestructure/03-aks
         run: |
-          echo "🔍 Verificando e forçando desbloqueio do estado..."
+          terraform import azurerm_key_vault_access_policy.terraform \
+            /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/rg-aks-dev/providers/Microsoft.KeyVault/vaults/kv-aks-devops-dev/objectId/afd26dc2-fc50-4d82-a531-f172d5b2f731
 
-          # Verificar se o blob existe e está locked
-          LOCK_STATUS=$(az storage blob show \
+          terraform import azurerm_key_vault_secret.postgresql_host \
+            "https://kv-aks-devops-dev.vault.azure.net/secrets/postgresql-host/b04c21d46aa9415ca9d9cf8e24bef946"
+
+          terraform import azurerm_key_vault_secret.postgresql_username \
+            "https://kv-aks-devops-dev.vault.azure.net/secrets/postgresql-username/ec7ca2acd5b247a4a548352a61104272"
+
+          terraform import azurerm_key_vault_secret.postgresql_password \
+            "https://kv-aks-devops-dev.vault.azure.net/secrets/postgresql-password/3975357d89634b23913d73399321d440"
+
+          terraform import azurerm_key_vault_secret.app_secret_key \
+            "https://kv-aks-devops-dev.vault.azure.net/secrets/app-secret-key/ebf279233f204e12b0e67b749b114474"
+
+      - name: Check and Force Unlock Terraform State (Dynamic Unlock ID)
+        run: |
+          echo "🔍 Verificando lock no estado Terraform..."
+
+          LEASE_ID=$(az storage blob lease show \
+            --blob-name "aks.tfstate" \
             --container-name "${{ needs.setup.outputs.tf_container }}" \
-            --name "aks.tfstate" \
             --account-name "${{ needs.setup.outputs.tf_sa }}" \
             --sas-token "${{ needs.setup.outputs.sas_token }}" \
-            --query "properties.lease.status" -o tsv 2>/dev/null || echo "unlocked")
+            --query leaseId -o tsv 2>/dev/null || echo "")
 
-          if [ "$LOCK_STATUS" = "locked" ]; then
-            echo "🔓 Blob está locked. Tentando liberar..."
+          if [ -n "$LEASE_ID" ]; then
+            echo "🔓 Lock está ativo com ID $LEASE_ID. Tentando desbloquear..."
 
-            # Método 1: Terraform force-unlock (usando ID fixo ou dinâmico se possível)
-            terraform -chdir=infraestructure/03-aks force-unlock -force bcb476c0-060a-e83a-4f94-e2df5f0905b6 || echo "⚠️ Force-unlock falhou"
+            terraform force-unlock -force "$LEASE_ID" || echo "⚠️ Falha no force-unlock"
 
-            # Método 2: Quebrar lease do blob
             az storage blob lease break \
               --container-name "${{ needs.setup.outputs.tf_container }}" \
               --name "aks.tfstate" \
               --account-name "${{ needs.setup.outputs.tf_sa }}" \
               --sas-token "${{ needs.setup.outputs.sas_token }}" \
-              --lease-break-period 0 || echo "⚠️ Lease break falhou"
+              --lease-break-period 0 || echo "⚠️ Falha ao quebrar lease"
 
-            sleep 10  # Aguardar propagação
+            sleep 10
           else
-            echo "✅ Blob não está locked"
+            echo "✅ Nenhum lock ativo encontrado."
           fi
 
       - name: Get ACR ID via Azure CLI
@@ -274,9 +289,8 @@ jobs:
       - name: Terraform Plan - AKS (Simplified and Robust)
         working-directory: infraestructure/03-aks
         run: |
-          echo "📋 Plano simplificado (sem import/estado antigo)..."
+          echo "📋 Criando arquivo terraform.tfvars.autogen com variáveis para plan..."
 
-          # Criar arquivo de variáveis temporário (se necessário, baseado no erro anterior)
           cat > terraform.tfvars.autogen << EOF
           environment = "dev"
           location    = "canadacentral"
@@ -288,6 +302,8 @@ jobs:
           acr_id = "${{ env.ACR_ID }}"
           EOF
 
+          echo "📋 Executando terraform plan..."
+
           terraform plan \
             -var-file="terraform.tfvars.autogen" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
@@ -295,16 +311,15 @@ jobs:
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
             -input=false \
-            -lock=false  # Manter sem lock para evitar conflitos
+            -lock=false
 
       - name: Terraform Apply - AKS (With Enhanced Recovery)
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/03-aks
         timeout-minutes: 20
         run: |
-          echo "⚡ Aplicando AKS (com recovery aprimorado)..."
+          echo "⚡ Aplicando AKS..."
 
-          # Tentar aplicar com lock normal primeiro
           if terraform apply \
             -var-file="terraform.tfvars.autogen" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
@@ -313,16 +328,24 @@ jobs:
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
             -auto-approve \
             -input=false; then
-            
+
             echo "✅ Aplicado com sucesso!"
-            
           else
-            echo "⚠️ Falha com lock normal. Tentando recovery..."
+            echo "⚠️ Falha com lock, tentando unlock dinâmico e apply sem lock..."
 
-            # Forçar unlock
-            terraform force-unlock -force bcb476c0-060a-e83a-4f94-e2df5f0905b6 || echo "Unlock falhou"
+            LEASE_ID=$(az storage blob lease show \
+              --blob-name "aks.tfstate" \
+              --container-name "${{ needs.setup.outputs.tf_container }}" \
+              --account-name "${{ needs.setup.outputs.tf_sa }}" \
+              --sas-token "${{ needs.setup.outputs.sas_token }}" \
+              --query leaseId -o tsv 2>/dev/null || echo "")
 
-            # Aplicar sem lock (emergência)
+            if [ -n "$LEASE_ID" ]; then
+              terraform force-unlock -force "$LEASE_ID" || echo "⚠️ Falha no force-unlock"
+            else
+              echo "⚠️ Não encontrado lease ativo para unlock"
+            fi
+
             terraform apply \
               -var-file="terraform.tfvars.autogen" \
               -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
@@ -337,8 +360,8 @@ jobs:
       - name: Post-deploy ACR Configuration
         if: ${{ github.event.inputs.tf_action == 'apply' && env.ACR_ID != '' }}
         run: |
-          echo "🔗 Configurando ACR access..."
-          sleep 30  # Aguardar AKS
+          echo "🔗 Configurando acesso ao ACR..."
+          sleep 30
 
           KUBELET_ID=$(az aks show \
             -g "rg-aks-dev" \
@@ -352,7 +375,6 @@ jobs:
               --scope "${{ env.ACR_ID }}" \
               || echo "Role já existe"
           fi
-
   # =====================================================
   # 5. DATABASE
   # =====================================================
