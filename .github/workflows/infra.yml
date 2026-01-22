@@ -237,6 +237,7 @@ jobs:
         shell: bash
         env:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
           set -e
 
@@ -251,9 +252,9 @@ jobs:
 
           if ! terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1; then
             echo "Importing Key Vault access policy..."
-            terraform import azurerm_key_vault_access_policy.terraform "$POLICY_ID" || true
+            terraform import azurerm_key_vault_access_policy.terraform "$POLICY_ID"
           else
-            echo "Access policy already managed by Terraform"
+            echo "Access policy already in Terraform state"
           fi
 
       - name: Terraform Plan - ACA
