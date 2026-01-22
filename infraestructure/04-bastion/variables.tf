@@ -33,8 +33,8 @@ variable "bastion_subnet_id" {
   }
 }
 
-variable "aks_subnet_cidr" {
-  description = "AKS subnet CIDR (for NSG rules)"
+variable "aca_subnet_cidr" {
+  description = "aca subnet CIDR (for NSG rules)"
   type        = string
 }
 
