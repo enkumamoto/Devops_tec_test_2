@@ -4,6 +4,17 @@ resource "azurerm_subnet" "aca" {
   virtual_network_name = azurerm_virtual_network.devops.name
   address_prefixes     = var.aca_subnet_address_prefixes
 
+  delegation {
+    name = "aca-delegation"
+
+    service_delegation {
+      name = "Microsoft.Web/serverFarms"
+      actions = [
+        "Microsoft.Network/virtualNetworks/subnets/action"
+      ]
+    }
+  }
+
   service_endpoints = [
     "Microsoft.ContainerRegistry",
     "Microsoft.KeyVault",
