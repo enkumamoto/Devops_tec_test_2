@@ -67,7 +67,7 @@ resource "azurerm_subnet" "bastion" {
 
 # Subnet para a sua VM Bastion (O Host que você vai gerenciar)
 resource "azurerm_subnet" "mgmt" {
-  name                 = var.snet-management
+  name                 = var.snet_management
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.devops.name
   address_prefixes     = var.snet-management_address_prefixes

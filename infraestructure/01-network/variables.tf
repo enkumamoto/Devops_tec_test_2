@@ -54,7 +54,7 @@ variable "snet-management_address_prefixes" {
   type        = list(string)
 }
 
-variable "snet-management" {
+variable "snet_management" {
   description = "Name for Management subnet"
   type        = string
 }
