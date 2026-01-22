@@ -37,7 +37,5 @@ locals {
     database = "snet-${local.naming_prefix}-database"
     bastion  = "snet-${local.naming_prefix}-bastion"
   }
-
-  timestamp = formatdate("YYYY-MM-DD-hhmmss", timestamp())
 }
 
