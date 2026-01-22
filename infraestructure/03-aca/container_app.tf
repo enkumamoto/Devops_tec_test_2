@@ -5,6 +5,21 @@ resource "azurerm_container_app" "fastapi" {
   resource_group_name          = azurerm_resource_group.aca.name
   revision_mode                = "Single" # Single = sempre latest revision
 
+  secret {
+    name  = "postgresql-host"
+    value = azurerm_key_vault_secret.postgresql_host.value
+  }
+
+  secret {
+    name  = "postgresql-username"
+    value = azurerm_key_vault_secret.postgresql_username.value
+  }
+
+  secret {
+    name  = "postgresql-password"
+    value = azurerm_key_vault_secret.postgresql_password.value
+  }
+
   template {
     container {
       name   = "fastapi-app"
