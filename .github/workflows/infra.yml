@@ -186,6 +186,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
 
+      # 🔐 Login no Azure
       - name: Azure Login
         run: |
           az login --service-principal \
@@ -193,6 +194,20 @@ jobs:
             -p "${{ secrets.ARM_CLIENT_SECRET }}" \
             --tenant "${{ secrets.ARM_TENANT_ID }}"
           az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      # ✅ AQUI ENTRA A CORREÇÃO 👇
+      - name: Register Azure Providers (ACA)
+        run: |
+          echo "🔧 Registrando providers Azure necessários..."
+
+          for provider in \
+            Microsoft.App \
+            Microsoft.Web \
+            Microsoft.ContainerRegistry \
+            Microsoft.OperationalInsights
+          do
+            az provider register --namespace $provider --wait
+          done
 
       - name: Get ACR Login Server
         id: get_acr
