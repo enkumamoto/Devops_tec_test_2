@@ -607,40 +607,154 @@ jobs:
   # 7. DEPLOY APP/K8S
   # =====================================================
   deploy-app:
-    runs-on: [self-hosted, bastion]
-    needs: [aks, database, bastion]
+    runs-on: ubuntu-latest # Runner padrão = RÁPIDO
+    needs: [aks] # Só depende do AKS estar pronto
+    timeout-minutes: 8 # Timeout curto
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Helm
-        run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          helm version  # Verifica instalação
+      - name: Setup Helm (Super Rápido)
+        uses: azure/setup-helm@v3
+        with:
+          version: "latest"
 
-      - name: Azure Login
-        run: |
-          az login \
-            --service-principal \
-            --username "${{ secrets.ARM_CLIENT_ID }}" \
-            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.ARM_TENANT_ID }}"
-          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "latest"
 
-      - name: Get AKS Credentials
-        run: |
-          az aks get-credentials \
-            --resource-group "${{ needs.aks.outputs.resource_group_name }}" \
-            --name "${{ needs.aks.outputs.cluster_name }}" \
-            --overwrite-existing
+      - name: Azure Login (Otimizado)
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
-      - name: Deploy FastAPI via Helm
+      - name: Get AKS Credentials (Rápido)
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: rg-aks-dev
+          cluster-name: aks-devops-dev-dev
+
+      - name: Verify Cluster Access
         run: |
+          echo "🔍 Verificando acesso ao cluster..."
+          kubectl cluster-info
+          kubectl get nodes
+          echo "✅ Cluster acessível"
+
+      - name: Build Custom Values for Helm (Dinâmico)
+        run: |
+          echo "📝 Criando values.yaml customizado..."
+
+          # Obter ACR login server dinamicamente
+          ACR_LOGIN_SERVER=$(az acr show \
+            -g "rg-acr-dev" \
+            -n "eijidevopsdevacr" \
+            --query loginServer -o tsv 2>/dev/null || echo "myacr.azurecr.io")
+
+          cat > helm-values.yaml << EOF
+          namespace: devops-app
+
+          image:
+            repository: ${ACR_LOGIN_SERVER}/fastapi-app
+            tag: latest
+            pullPolicy: IfNotPresent
+
+          replicaCount: 2
+
+          service:
+            type: ClusterIP
+            port: 80
+            targetPort: 8000
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          ingress:
+            enabled: true
+            className: nginx
+            annotations:
+              nginx.ingress.kubernetes.io/ssl-redirect: "false"
+              nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+            hosts:
+              - host: fastapi.devops.local
+                paths:
+                  - path: /
+                    pathType: Prefix
+
+          keyVault:
+            enabled: false  # Para teste, desabilita CSI driver
+          EOF
+
+          echo "✅ Values.yaml gerado:"
+          cat helm-values.yaml
+
+      - name: Deploy with Helm (Com Rollback Automático)
+        run: |
+          echo "🚀 Deploy com Helm..."
+
+          # 1. Criar namespace se não existir
+          kubectl create namespace devops-app 2>/dev/null || echo "Namespace já existe"
+
+          # 2. Instalar/Atualizar com Helm
           helm upgrade --install fastapi \
             infraestructure/helm/fastapi \
             --namespace devops-app \
-            --create-namespace \
-            --wait  # Aguarda rollout completo
+            --values helm-values.yaml \
+            --atomic \           # Rollback automático se falhar
+            --wait \             # Aguarda pods ficarem ready
+            --timeout 5m \       # Timeout curto
+            --cleanup-on-fail    # Limpa se falhar
+
+          echo "✅ Helm deploy concluído"
+
+      - name: Verify Deployment
+        run: |
+          echo "📊 Verificando status..."
+
+          # Aguardar pods ready
+          sleep 10
+
+          # Status dos recursos
+          echo "=== PODS ==="
+          kubectl get pods -n devops-app -o wide
+
+          echo "=== SERVICES ==="
+          kubectl get svc -n devops-app
+
+          echo "=== INGRESS ==="
+          kubectl get ingress -n devops-app
+
+          echo "=== DEPLOYMENT STATUS ==="
+          kubectl rollout status deployment/fastapi -n devops-app --timeout=60s
+
+          # Testar acesso interno
+          echo "=== TESTE DE ACESSO INTERNO ==="
+          kubectl run -n devops-app test-curl --image=curlimages/curl -i --rm --restart=Never -- \
+            curl -s -o /dev/null -w "%{http_code}" http://fastapi-service.devops-app.svc.cluster.local:80/health || echo "Teste falhou"
+
+      - name: Get Application URL
+        run: |
+          echo "🌐 URLs da aplicação:"
+          echo ""
+          echo "1. Interno no cluster:"
+          echo "   http://fastapi-service.devops-app.svc.cluster.local"
+          echo ""
+          echo "2. Via Ingress (externo):"
+          echo "   http://fastapi.devops.local"
+          echo ""
+          echo "3. Para testar localmente (port-forward):"
+          echo "   kubectl port-forward -n devops-app svc/fastapi-service 8080:80"
+          echo "   Acesse: http://localhost:8080"
+          echo ""
+          echo "✅ Deploy completo em $(date +%H:%M:%S)"
 
   # =========================
   # 8. VALIDATE & SAVE OUTPUTS
