@@ -1,5 +1,8 @@
-data "azurerm_resource_group" "aca" {
-  name = var.resource_group_name
+resource "azurerm_resource_group" "aca" {
+  name     = var.resource_group_name
+  location = var.location
+
+  tags = var.tags
 }
 
 # Log Analytics Workspace para ACA logs
@@ -20,7 +23,7 @@ resource "azurerm_container_app_environment" "devops" {
   resource_group_name        = data.azurerm_resource_group.aca.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.aca.id
 
-  infrastructure_subnet_id = local.aca_subnet_id
+  infrastructure_subnet_id = data.terraform_remote_state.network.outputs.aca_subnet_id
 
   tags = var.tags
 }

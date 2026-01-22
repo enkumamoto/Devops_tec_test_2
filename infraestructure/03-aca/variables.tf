@@ -180,3 +180,7 @@ variable "tf_backend_sas_token" {
   type        = string
   sensitive   = true
 }
+
+variable "aca_subnet_cidr" {
+  type = string
+}
