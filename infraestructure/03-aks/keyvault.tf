@@ -73,7 +73,7 @@ resource "azurerm_key_vault_access_policy" "terraform" {
   #     key_permissions,
   #     secret_permissions,
   #     object_id,
-  #     tenant_id
+  #     tenant_id,
   #   ]
   # }
 }

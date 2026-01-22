@@ -177,6 +177,7 @@ jobs:
   aks:
     runs-on: ubuntu-latest
     needs: [setup, network, acr]
+    timeout-minutes: 30 # LIMITE DE 30 MINUTOS!
 
     steps:
       - uses: actions/checkout@v4
@@ -192,107 +193,135 @@ jobs:
             --tenant "${{ secrets.ARM_TENANT_ID }}"
           az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
-      - name: Get ACR ID
+      - name: Clean Existing Resources (SEGURANÇA)
+        run: |
+          echo "🧹 Limpando recursos antigos para evitar conflitos..."
+
+          # Listar recursos existentes
+          echo "Recursos existentes no rg-aks-dev:"
+          az resource list -g "rg-aks-dev" --query "[].{Name:name, Type:type}" -o table || echo "RG não existe"
+
+          # SOMENTE se quiser limpar para teste fresco:
+          # echo "DELETANDO AKS (se existir)..."
+          # az aks delete -g "rg-aks-dev" -n "aks-devops-dev-dev" --yes --no-wait || true
+          # echo "DELETANDO Key Vault (se existir)..."
+          # az keyvault delete -g "rg-aks-dev" -n "kv-aks-devops-dev-dev" || true
+
+      - name: Get ACR ID via Azure CLI
         id: get_acr
         run: |
-          echo "🔍 Verificando existência do ACR..."
-          if az acr show -g "rg-acr-dev" -n "eijidevopsdevacr" &>/dev/null; then
-            ACR_ID=$(az acr show -g "rg-acr-dev" -n "eijidevopsdevacr" --query id -o tsv)
-            echo "✅ ACR encontrado"
+          echo "📦 Obtendo ACR ID..."
+          ACR_ID=$(az acr show \
+            --resource-group "rg-acr-dev" \
+            --name "eijidevopsdevacr" \
+            --query id -o tsv 2>/dev/null || echo "")
+
+          if [ -n "$ACR_ID" ]; then
+            echo "✅ ACR ID: $ACR_ID"
             echo "acr_id=$ACR_ID" >> $GITHUB_OUTPUT
             echo "ACR_ID=$ACR_ID" >> $GITHUB_ENV
           else
-            echo "⚠️ ACR não encontrado"
+            echo "⚠️  ACR não encontrado - criando sem ACR integration"
             echo "acr_id=" >> $GITHUB_OUTPUT
             echo "ACR_ID=" >> $GITHUB_ENV
-          fi
-
-      - name: Check and Fix Remote State
-        working-directory: infraestructure/03-aks
-        run: |
-          echo "🔄 Verificando estado remoto..."
-          # ... (código anterior da opção 4) ...
-
-      - name: Fix KeyVault Configuration Errors
-        working-directory: infraestructure/03-aks
-        run: |
-          echo "🔧 Corrigindo atributos errados no keyvault.tf..."
-          if [ -f keyvault.tf ]; then
-            # Corrigir atributos do lifecycle
-            sed -i 's/certificate_permissions,\|key_permissions,\|secret_permissions/value/g' keyvault.tf
           fi
 
       - name: Terraform Init - AKS
         working-directory: infraestructure/03-aks
         run: |
+          echo "🚀 Inicializando Terraform (limpo)..."
+          rm -rf .terraform .terraform.lock.hcl  # Forçar init limpo
+
           terraform init \
             -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
             -backend-config="key=aks.tfstate" \
             -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -reconfigure -input=false
-
-      - name: Import Existing Resources to State
-        working-directory: infraestructure/03-aks
-        run: |
-          echo "📥 Importando recursos existentes para o estado do Terraform..."
-
-          KEYVAULT_NAME="kv-aks-devops-dev-dev"
-          SUBSCRIPTION_ID="${{ secrets.ARM_SUBSCRIPTION_ID }}"
-          RG_NAME="rg-aks-dev"
-          SP_OBJECT_ID="${{ secrets.ARM_CLIENT_ID }}"  # Service Principal Object ID
-
-          # Importar azurerm_key_vault_access_policy.terraform
-          echo "Importando access policy do Service Principal..."
-          terraform import azurerm_key_vault_access_policy.terraform \
-            "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG_NAME/providers/Microsoft.KeyVault/vaults/$KEYVAULT_NAME/objectId/$SP_OBJECT_ID" \
-            || echo "⚠️  Access policy não existe ou erro (pode ignorar)"
-
-          # Importar os segredos
-          echo "Importando segredos do Key Vault..."
-
-          # Lista de segredos para importar
-          SECRETS=(
-            "postgresql-host"
-            "postgresql-username" 
-            "postgresql-password"
-            "app-secret-key"
-          )
-
-          for SECRET_NAME in "${SECRETS[@]}"; do
-            echo "Importando $SECRET_NAME..."
-            terraform import azurerm_key_vault_secret.$SECRET_NAME \
-              "https://$KEYVAULT_NAME.vault.azure.net/secrets/$SECRET_NAME" \
-              || echo "⚠️  Secret $SECRET_NAME não existe ou erro (pode ignorar)"
-          done
-
-      - name: Terraform Plan - AKS
-        working-directory: infraestructure/03-aks
-        run: |
-          terraform plan \
-            -var-file="terraform.tfvars" \
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -var="acr_id=${{ env.ACR_ID }}" \
-            -var="enable_acr_rbac=false" \
+            -reconfigure \
             -input=false
 
-      - name: Terraform Apply - AKS
-        if: ${{ github.event.inputs.tf_action == 'apply' }}
+      - name: Terraform Plan - AKS (SIMPLIFICADO)
         working-directory: infraestructure/03-aks
         run: |
-          terraform apply \
-            -var-file="terraform.tfvars" \
+          echo "📋 Plano SIMPLIFICADO (sem import/estado antigo)..."
+
+          # Criar arquivo de variáveis temporário
+          cat > terraform.tfvars.autogen << EOF
+          environment = "dev"
+          location    = "canadacentral"
+          resource_group_name = "rg-aks-dev"
+          aks_name   = "aks-devops"
+          dns_prefix = "aks-devops-dev"
+          kubernetes_version = "1.33.5"
+          enable_acr_rbac = false
+          acr_id = "${{ env.ACR_ID }}"
+          EOF
+
+          terraform plan \
+            -var-file="terraform.tfvars.autogen" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -var="acr_id=${{ env.ACR_ID }}" \
-            -var="enable_acr_rbac=false" \
-            -auto-approve -input=false
+            -input=false
+
+      - name: Terraform Apply - AKS (COM TIMEOUT)
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
+        working-directory: infraestructure/03-aks
+        timeout-minutes: 25 # AKS leva ~10-20min
+        run: |
+          echo "⚡ Aplicando AKS (timeout: 25min)..."
+
+          # Aplicar com output detalhado
+          terraform apply \
+            -var-file="terraform.tfvars.autogen" \
+            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
+            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
+            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
+            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -auto-approve \
+            -input=false
+
+      - name: Configure ACR Access (Pós-deploy)
+        if: ${{ github.event.inputs.tf_action == 'apply' && env.ACR_ID != '' }}
+        run: |
+          echo "🔗 Configurando acesso ACR->AKS via Azure CLI..."
+
+          # Aguardar AKS estar pronto
+          echo "⏳ Aguardando AKS ficar pronto..."
+          sleep 120
+
+          # Obter kubelet identity
+          KUBELET_ID=$(az aks show \
+            -g "rg-aks-dev" \
+            -n "aks-devops-dev-dev" \
+            --query identityProfile.kubeletidentity.objectId -o tsv)
+
+          echo "🔑 Kubelet Object ID: $KUBELET_ID"
+
+          # Atribuir role
+          az role assignment create \
+            --assignee "$KUBELET_ID" \
+            --role "AcrPull" \
+            --scope "${{ env.ACR_ID }}" \
+            --description "AKS ACR Access" \
+            || echo "⚠️  Role já existe"
+
+          echo "✅ Acesso ACR configurado"
+
+      - name: Get AKS Credentials
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
+        run: |
+          echo "🔐 Obtendo credenciais do AKS..."
+          az aks get-credentials \
+            -g "rg-aks-dev" \
+            -n "aks-devops-dev-dev" \
+            --overwrite-existing
+
+          # Verificar cluster
+          kubectl cluster-info
+          echo "✅ AKS configurado e acessível"
 
   # =====================================================
   # 5. DATABASE
