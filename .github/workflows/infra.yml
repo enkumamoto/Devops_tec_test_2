@@ -540,6 +540,114 @@ jobs:
         if: github.event.inputs.tf_action == 'apply' && env.CHANGES_DETECTED != 'true'
         run: |
           echo "⏭️ Nenhuma mudança detectada - apply não necessário"
+  # =====================================================
+  # 5. DATABASE
+  # =====================================================
+  database:
+    runs-on: ubuntu-latest
+    needs: [setup, network]
+    if: success()
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Azure Login for Resource Query
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.ARM_CLIENT_ID }}" \
+            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
+
+          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Get Network IDs from Azure
+        run: |
+          RG_NETWORK="rg-network-dev"
+          VNET_NAME="vnet"
+          SUBNET_NAME="snet-dev-devops-database"
+
+          VNET_ID=$(az network vnet show \
+            --resource-group "$RG_NETWORK" \
+            --name "$VNET_NAME" \
+            --query id -o tsv)
+
+          DATABASE_SUBNET_ID=$(az network vnet subnet show \
+            --resource-group "$RG_NETWORK" \
+            --vnet-name "$VNET_NAME" \
+            --name "$SUBNET_NAME" \
+            --query id -o tsv)
+
+          if [ -z "$VNET_ID" ] || [ -z "$DATABASE_SUBNET_ID" ]; then
+            echo "Erro ao obter VNET_ID ou DATABASE_SUBNET_ID"
+            exit 1
+          fi
+
+          echo "VNET_ID=$VNET_ID" >> $GITHUB_ENV
+          echo "DATABASE_SUBNET_ID=$DATABASE_SUBNET_ID" >> $GITHUB_ENV
+
+      - name: Terraform Init - Database
+        working-directory: infraestructure/05-database
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
+            -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
+            -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
+            -backend-config="key=database.tfstate" \
+            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
+            -reconfigure \
+            -input=false
+
+      - name: Terraform Plan - Database
+        working-directory: infraestructure/05-database
+        run: |
+          terraform plan \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="location=canadacentral" \
+            -var="environment=dev" \
+            -var="resource_group_name=rg-database-dev" \
+            -var="vnet_id=$VNET_ID" \
+            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
+            -var="db_name=psql-devops" \
+            -var="postgres_version=15" \
+            -var="sku_name=B_Standard_B1ms" \
+            -var="storage_mb=32768" \
+            -var="backup_retention_days=7" \
+            -var="geo_redundant_backup_enabled=false" \
+            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
+            -var="charset=UTF8" \
+            -var="collation=en_US.utf8" \
+            -var="zone=1" \
+            -var="high_availability_mode=Disabled" \
+            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
+            -input=false
+
+      - name: Terraform Apply - Database
+        if: ${{ github.event.inputs.tf_action == 'apply' }}
+        working-directory: infraestructure/05-database
+        run: |
+          terraform apply \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="location=canadacentral" \
+            -var="environment=dev" \
+            -var="resource_group_name=rg-database-dev" \
+            -var="vnet_id=$VNET_ID" \
+            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
+            -var="db_name=psql-devops" \
+            -var="postgres_version=15" \
+            -var="sku_name=B_Standard_B1ms" \
+            -var="storage_mb=32768" \
+            -var="backup_retention_days=7" \
+            -var="geo_redundant_backup_enabled=false" \
+            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
+            -var="charset=UTF8" \
+            -var="collation=en_US.utf8" \
+            -var="zone=1" \
+            -var="high_availability_mode=Disabled" \
+            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
+            -auto-approve \
+            -input=false
 
   # =====================================================
   # 6. BASTION
