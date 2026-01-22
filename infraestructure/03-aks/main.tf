@@ -4,7 +4,7 @@ resource "azurerm_resource_group" "aks" {
 
   tags = merge(var.tags)
 
-  lifecycle {
-    create_before_destroy = true
-  }
+  # lifecycle {
+  #   create_before_destroy = true
+  # }
 }
