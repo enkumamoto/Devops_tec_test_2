@@ -1,4 +1,4 @@
-name: Destroy Azure Infrastructure (FORCE)
+name: Destroy Azure Infrastructure (ACA)
 
 on:
   workflow_dispatch:
@@ -39,7 +39,7 @@ jobs:
           az account set --subscription "$ARM_SUBSCRIPTION_ID"
 
       # =====================================================
-      # LISTA DE RESOURCE GROUPS
+      # DEFINIR RESOURCE GROUPS
       # =====================================================
       - name: Define Resource Groups
         run: |
@@ -48,42 +48,31 @@ jobs:
           echo "RG_TFSTATE=rg-terraform-state-${ENV}" >> $GITHUB_ENV
           echo "RG_NETWORK=rg-network-${ENV}" >> $GITHUB_ENV
           echo "RG_ACR=rg-acr-${ENV}" >> $GITHUB_ENV
-          echo "RG_AKS=rg-aks-${ENV}" >> $GITHUB_ENV
+          echo "RG_ACA=rg-aca-${ENV}" >> $GITHUB_ENV
           echo "RG_DATABASE=rg-database-${ENV}" >> $GITHUB_ENV
-          echo "RG_BASTION=rg-bastion-${ENV}" >> $GITHUB_ENV
 
-          echo "📦 Resource Groups definidos:"
+          echo "📦 Resource Groups:"
           echo " - rg-terraform-state-${ENV}"
           echo " - rg-network-${ENV}"
           echo " - rg-acr-${ENV}"
-          echo " - rg-aks-${ENV}"
+          echo " - rg-aca-${ENV}"
           echo " - rg-database-${ENV}"
-          echo " - rg-bastion-${ENV}"
 
       # =====================================================
-      # DELETE AKS FIRST (EVITA BLOQUEIOS)
+      # DELETE CONTAINER APPS (PRIMEIRO)
       # =====================================================
-      - name: Delete AKS Resource Group (Force)
+      - name: Delete Container Apps RG
         run: |
-          echo "🔥 Deletando AKS RG..."
+          echo "🔥 Deletando ACA RG..."
           az group delete \
-            --name "$RG_AKS" \
+            --name "$RG_ACA" \
             --yes \
             --no-wait \
-            || echo "⚠️ RG AKS não existe"
+            || echo "⚠️ RG ACA não existe"
 
       # =====================================================
-      # DELETE APPLICATION SUPPORT RGs
+      # DELETE DEPENDÊNCIAS
       # =====================================================
-      - name: Delete Bastion RG
-        run: |
-          echo "🔥 Deletando Bastion RG..."
-          az group delete \
-            --name "$RG_BASTION" \
-            --yes \
-            --no-wait \
-            || echo "⚠️ RG Bastion não existe"
-
       - name: Delete Database RG
         run: |
           echo "🔥 Deletando Database RG..."
@@ -103,7 +92,7 @@ jobs:
             || echo "⚠️ RG ACR não existe"
 
       # =====================================================
-      # DELETE NETWORK (POR ÚLTIMO)
+      # DELETE NETWORK (SE EXISTIR)
       # =====================================================
       - name: Delete Network RG
         run: |
@@ -115,7 +104,7 @@ jobs:
             || echo "⚠️ RG Network não existe"
 
       # =====================================================
-      # DELETE TERRAFORM BACKEND (OPCIONAL / FINAL)
+      # DELETE TERRAFORM BACKEND (POR ÚLTIMO)
       # =====================================================
       - name: Delete Terraform Backend RG
         run: |
@@ -132,10 +121,10 @@ jobs:
       - name: Summary
         run: |
           echo ""
-          echo "🧨 DESTRUIÇÃO INICIADA COM SUCESSO"
+          echo "🧨 DESTRUIÇÃO INICIADA (ACA)"
           echo ""
-          echo "⏳ Azure continuará deletando recursos em background."
-          echo "📌 Você pode acompanhar com:"
+          echo "⏳ Azure continuará removendo os recursos em background."
+          echo "📌 Acompanhe com:"
           echo "   az group list --query \"[].name\" -o table"
           echo ""
-          echo "✅ Pipeline de destroy finalizado."
+          echo "✅ Pipeline finalizado."
