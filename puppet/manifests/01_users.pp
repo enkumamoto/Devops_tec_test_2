@@ -33,7 +33,7 @@ class users {
 
     file { "/home/${user}/.ssh/authorized_keys":
       ensure => file,
-      source => "puppet:///files/ssh/authorized_keys_${user}",
+      source => "/tmp/repo/puppet/files/ssh/authorized_keys_${user}",
       owner  => $user,
       group  => $user,
       mode   => '0600',

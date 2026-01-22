@@ -1,17 +1,31 @@
 #cloud-config
 package_update: true
+package_upgrade: true
 
 packages:
   - docker.io
   - docker-compose-plugin
   - puppet-agent
-  - git # Adicionado: para clonar o repositório
+  - git
 
 runcmd:
+  # 1. Configura permissões do Docker
   - systemctl enable docker
   - systemctl start docker
   - usermod -aG docker ${admin_username}
-  - git clone https://github.com/enkumamoto/Devops_tec_test_2.git /tmp/repo # Clona o repositório (substitua pela URL real)
+
+  # 2. Ajusta o PATH para o Puppet (importante para o shell atual)
+  - export PATH=$PATH:/opt/puppetlabs/bin
+
+  # 3. Instala módulos necessários do Puppet Forge (Exemplos úteis)
+  - /opt/puppetlabs/bin/puppet module install puppetlabs-accounts --version 7.0.0
+  - /opt/puppetlabs/bin/puppet module install puppetlabs-docker --version 7.0.0
+
+  # 4. Clona e aplica a configuração
+  - git clone https://github.com/enkumamoto/Devops_tec_test_2.git /tmp/repo
   - cd /tmp/repo/puppet
-  - puppet apply manifests/site.pp # Executa os manifests do Puppet
-  - rm -rf /tmp/repo # Limpa o repositório após execução
+  # Usamos o caminho completo para garantir a execução
+  - /opt/puppetlabs/bin/puppet apply manifests/site.pp --modulepath=/etc/puppetlabs/code/modules:/tmp/repo/puppet/modules
+
+  # 5. Limpeza (Opcional - em testes, às vezes é bom deixar para debug)
+  # - rm -rf /tmp/repo

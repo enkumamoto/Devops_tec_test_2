@@ -64,3 +64,18 @@ resource "azurerm_subnet" "bastion" {
 
   depends_on = [azurerm_virtual_network.devops]
 }
+
+# Subnet para a sua VM Bastion (O Host que você vai gerenciar)
+resource "azurerm_subnet" "mgmt" {
+  name                 = var.snet-management
+  resource_group_name  = azurerm_resource_group.network.name
+  virtual_network_name = azurerm_virtual_network.devops.name
+  address_prefixes     = var.snet-management_address_prefixes
+
+  lifecycle {
+    create_before_destroy = true
+    #ignore_changes        = [tags["LastModified"]]
+  }
+
+  depends_on = [azurerm_virtual_network.devops]
+}

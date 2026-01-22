@@ -1,4 +1,4 @@
-node 'bastion-host' {
+node default {
   include basics
   include users
   include docker

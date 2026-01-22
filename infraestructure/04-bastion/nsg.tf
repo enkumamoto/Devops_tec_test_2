@@ -3,20 +3,19 @@ resource "azurerm_network_security_group" "bastion" {
   location            = var.location
   resource_group_name = azurerm_resource_group.bastion.name
 
-  # Remova o bloco dynamic inteiro e substitua por esta regra única para permitir SSH de qualquer IP
+
   security_rule {
-    name                       = "Allow-SSH-Any"
-    priority                   = 100 # Prioridade baixa para ser avaliada primeiro
+    name                       = "AllowBastionInbound"
+    priority                   = 100
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
-    source_address_prefix      = "*" # Permite de qualquer IP externo
+    source_address_prefix      = "GatewayManager" # Tag de serviço do Azure Bastion
     source_port_range          = "*"
-    destination_address_prefix = "*"  # Aplica à VM bastion (ou ajuste se necessário)
-    destination_port_range     = "22" # Porta SSH
+    destination_port_range     = "22"
+    destination_address_prefix = "*"
   }
 
-  # Mantenha as outras regras existentes
   security_rule {
     name                       = "AllowVnetInBound"
     priority                   = 200

@@ -48,3 +48,13 @@ variable "project_name" {
   type        = string
   default     = "devops"
 }
+
+variable "snet-management_address_prefixes" {
+  description = "CIDR for Management subnet"
+  type        = list(string)
+}
+
+variable "snet-management" {
+  description = "Name for Management subnet"
+  type        = string
+}

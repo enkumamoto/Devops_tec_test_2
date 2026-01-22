@@ -1,22 +1,9 @@
-# Conexão com o MySQL
-PMA_HOST=<%= @db_host %>
-PMA_PORT=<%= @db_port || '3306' %>
-PMA_USER=<%= @db_user %>
-PMA_PASSWORD=<%= @db_password %>
+$db_host = "mysql-db-private-endpoint"
+$db_user = "admin"
+$db_password = "sua_senha_secreta"
 
-# Configurações PHP
-UPLOAD_LIMIT=<%= @upload_limit || '50M' %>
-MEMORY_LIMIT=<%= @memory_limit || '256M' %>
-MAX_EXECUTION_TIME=<%= @max_execution_time || '300' %>
-MAX_INPUT_VARS=<%= @max_input_vars || '10000' %>
-
-# Segurança
-PMA_ABSOLUTE_URI=http://localhost:8080/
-PMA_ARBITRARY=0
-PMA_QUERYHISTORY_MAX=100
-
-# Sessões
-SESSION_GC_MAXLIFETIME=<%= @session_gc_maxlifetime || '1440' %>
-
-# Ambiente
-TZ=<%= @timezone || 'America/Sao_Paulo' %>
+file { '/opt/phpmyadmin/.env':
+  ensure  => file,
+  content => template('phpmyadmin/phpmyadmin-env.erb'),
+  require => File['/opt/phpmyadmin'],
+}
