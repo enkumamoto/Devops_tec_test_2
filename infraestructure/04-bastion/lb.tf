@@ -4,10 +4,14 @@ resource "azurerm_lb" "bastion_internal" {
   resource_group_name = azurerm_resource_group.bastion.name
   sku                 = "Standard"
 
-  frontend_ip_configuration {
-    name                          = "LoadBalancerFrontEnd"
-    subnet_id                     = var.bastion_subnet_id
-    private_ip_address_allocation = "Dynamic"
+  dynamic "frontend_ip_configuration" {
+    for_each = var.bastion_subnet_id != "" ? [1] : []
+
+    content {
+      name                          = "LoadBalancerFrontEnd"
+      subnet_id                     = var.bastion_subnet_id
+      private_ip_address_allocation = "Dynamic"
+    }
   }
 
   tags = var.tags

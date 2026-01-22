@@ -24,8 +24,13 @@ variable "vnet_id" {
 }
 
 variable "bastion_subnet_id" {
-  description = "Subnet ID for bastion"
+  description = "ID da subnet para o bastion"
   type        = string
+
+  validation {
+    condition     = can(regex("^/subscriptions/.*/resourceGroups/.*/providers/Microsoft.Network/virtualNetworks/.*/subnets/.*", var.bastion_subnet_id)) || var.bastion_subnet_id == ""
+    error_message = "O subnet ID deve ser um Azure Resource ID válido ou vazio."
+  }
 }
 
 variable "aks_subnet_cidr" {

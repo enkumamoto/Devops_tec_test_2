@@ -516,6 +516,80 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
 
+      - name: Azure Login
+        run: |
+          az login --service-principal \
+            -u "${{ secrets.ARM_CLIENT_ID }}" \
+            -p "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
+          az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+
+      - name: Get Bastion Subnet ID (with fallback)
+        id: get_subnet
+        run: |
+          echo "🔍 Obtendo Bastion Subnet ID..."
+
+          # Tentar do output do network module
+          NETWORK_SUBNET_ID="${{ needs.network.outputs.bastion_subnet_id }}"
+
+          if [ -n "$NETWORK_SUBNET_ID" ]; then
+            echo "✅ Usando subnet do módulo network: $NETWORK_SUBNET_ID"
+            SUBNET_ID="$NETWORK_SUBNET_ID"
+          else
+            echo "⚠️  Subnet ID vazio no output. Buscando via Azure CLI..."
+            
+            # Buscar subnet manualmente
+            SUBNET_ID=$(az network vnet subnet show \
+              --resource-group "rg-network-dev" \
+              --vnet-name "vnet" \
+              --name "snet-dev-devops-bastion" \
+              --query id -o tsv 2>/dev/null || echo "")
+            
+            if [ -z "$SUBNET_ID" ]; then
+              echo "❌ Subnet não encontrada! Criando..."
+              # Se não existir, criar
+              SUBNET_ID=$(az network vnet subnet create \
+                --resource-group "rg-network-dev" \
+                --vnet-name "vnet" \
+                --name "snet-dev-devops-bastion" \
+                --address-prefixes "10.0.2.0/28" \
+                --query id -o tsv)
+            fi
+            
+            echo "✅ Subnet ID via CLI: $SUBNET_ID"
+          fi
+
+          echo "Subnet ID final: $SUBNET_ID"
+          echo "bastion_subnet_id=$SUBNET_ID" >> $GITHUB_OUTPUT
+          echo "BASTION_SUBNET_ID=$SUBNET_ID" >> $GITHUB_ENV
+
+      - name: Debug Network Outputs
+        run: |
+          echo "🔍 Debugando outputs do módulo Network:"
+          echo "VNET ID: '${{ needs.network.outputs.vnet_id }}'"
+          echo "Bastion Subnet ID: '${{ needs.network.outputs.bastion_subnet_id }}'"
+          echo "AKS Subnet CIDR: '${{ needs.network.outputs.aks_subnet_address_prefixes }}'"
+
+          # Se bastion_subnet_id estiver vazio, vamos obter via CLI
+          if [ -z "${{ needs.network.outputs.bastion_subnet_id }}" ]; then
+            echo "⚠️  Bastion Subnet ID está vazio! Buscando via Azure CLI..."
+            
+            az login --service-principal \
+              -u "${{ secrets.ARM_CLIENT_ID }}" \
+              -p "${{ secrets.ARM_CLIENT_SECRET }}" \
+              --tenant "${{ secrets.ARM_TENANT_ID }}"
+            az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+            
+            BASTION_SUBNET_ID=$(az network vnet subnet show \
+              --resource-group "rg-network-dev" \
+              --vnet-name "vnet" \
+              --name "snet-dev-devops-bastion" \
+              --query id -o tsv 2>/dev/null || echo "")
+            
+            echo "Bastion Subnet ID via CLI: '$BASTION_SUBNET_ID'"
+            echo "BASTION_SUBNET_ID=$BASTION_SUBNET_ID" >> $GITHUB_ENV
+          fi
+
       - name: Terraform Init - Bastion
         working-directory: infraestructure/04-bastion
         run: |
@@ -533,8 +607,10 @@ jobs:
         run: |
           terraform plan \
             -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="location=canadacentral" \
+            -var="environment=dev" \
             -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
-            -var="bastion_subnet_id=${{ needs.network.outputs.bastion_subnet_id }}" \
+            -var="bastion_subnet_id=${{ steps.get_subnet.outputs.bastion_subnet_id }}" \
             -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_address_prefixes[0] }}" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
@@ -542,18 +618,16 @@ jobs:
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
             -input=false
 
-      - name: Debug Bastion Subnet ID
-        run: |
-          echo "Bastion Subnet ID recebido: '${{ needs.network.outputs.bastion_subnet_id }}'"
-
       - name: Terraform Apply - Bastion
         if: ${{ github.event.inputs.tf_action == 'apply' }}
         working-directory: infraestructure/04-bastion
         run: |
           terraform apply \
             -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="location=canadacentral" \
+            -var="environment=dev" \
             -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
-            -var="bastion_subnet_id=${{ needs.network.outputs.bastion_subnet_id }}" \
+            -var="bastion_subnet_id=${{ steps.get_subnet.outputs.bastion_subnet_id }}" \
             -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_address_prefixes[0] }}" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
