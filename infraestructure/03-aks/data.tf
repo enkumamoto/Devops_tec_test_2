@@ -23,3 +23,7 @@ data "terraform_remote_state" "acr" {
     sas_token            = var.tf_backend_sas_token
   }
 }
+
+data "azurerm_resource_group" "aks" {
+  name = var.resource_group_name
+}
