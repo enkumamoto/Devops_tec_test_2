@@ -1,0 +1,141 @@
+name: Destroy Azure Infrastructure (FORCE)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Azure Login (Service Principal)
+        run: |
+          echo "🔐 Azure Login..."
+          az login \
+            --service-principal \
+            --username "$ARM_CLIENT_ID" \
+            --password "$ARM_CLIENT_SECRET" \
+            --tenant "$ARM_TENANT_ID"
+
+          az account set --subscription "$ARM_SUBSCRIPTION_ID"
+
+      # =====================================================
+      # LISTA DE RESOURCE GROUPS
+      # =====================================================
+      - name: Define Resource Groups
+        run: |
+          ENV="${ENVIRONMENT}"
+
+          echo "RG_TFSTATE=rg-terraform-state-${ENV}" >> $GITHUB_ENV
+          echo "RG_NETWORK=rg-network-${ENV}" >> $GITHUB_ENV
+          echo "RG_ACR=rg-acr-${ENV}" >> $GITHUB_ENV
+          echo "RG_AKS=rg-aks-${ENV}" >> $GITHUB_ENV
+          echo "RG_DATABASE=rg-database-${ENV}" >> $GITHUB_ENV
+          echo "RG_BASTION=rg-bastion-${ENV}" >> $GITHUB_ENV
+
+          echo "📦 Resource Groups definidos:"
+          echo " - rg-terraform-state-${ENV}"
+          echo " - rg-network-${ENV}"
+          echo " - rg-acr-${ENV}"
+          echo " - rg-aks-${ENV}"
+          echo " - rg-database-${ENV}"
+          echo " - rg-bastion-${ENV}"
+
+      # =====================================================
+      # DELETE AKS FIRST (EVITA BLOQUEIOS)
+      # =====================================================
+      - name: Delete AKS Resource Group (Force)
+        run: |
+          echo "🔥 Deletando AKS RG..."
+          az group delete \
+            --name "$RG_AKS" \
+            --yes \
+            --no-wait \
+            || echo "⚠️ RG AKS não existe"
+
+      # =====================================================
+      # DELETE APPLICATION SUPPORT RGs
+      # =====================================================
+      - name: Delete Bastion RG
+        run: |
+          echo "🔥 Deletando Bastion RG..."
+          az group delete \
+            --name "$RG_BASTION" \
+            --yes \
+            --no-wait \
+            || echo "⚠️ RG Bastion não existe"
+
+      - name: Delete Database RG
+        run: |
+          echo "🔥 Deletando Database RG..."
+          az group delete \
+            --name "$RG_DATABASE" \
+            --yes \
+            --no-wait \
+            || echo "⚠️ RG Database não existe"
+
+      - name: Delete ACR RG
+        run: |
+          echo "🔥 Deletando ACR RG..."
+          az group delete \
+            --name "$RG_ACR" \
+            --yes \
+            --no-wait \
+            || echo "⚠️ RG ACR não existe"
+
+      # =====================================================
+      # DELETE NETWORK (POR ÚLTIMO)
+      # =====================================================
+      - name: Delete Network RG
+        run: |
+          echo "🔥 Deletando Network RG..."
+          az group delete \
+            --name "$RG_NETWORK" \
+            --yes \
+            --no-wait \
+            || echo "⚠️ RG Network não existe"
+
+      # =====================================================
+      # DELETE TERRAFORM BACKEND (OPCIONAL / FINAL)
+      # =====================================================
+      - name: Delete Terraform Backend RG
+        run: |
+          echo "🔥 Deletando Terraform Backend RG..."
+          az group delete \
+            --name "$RG_TFSTATE" \
+            --yes \
+            --no-wait \
+            || echo "⚠️ RG Terraform Backend não existe"
+
+      # =====================================================
+      # SUMMARY
+      # =====================================================
+      - name: Summary
+        run: |
+          echo ""
+          echo "🧨 DESTRUIÇÃO INICIADA COM SUCESSO"
+          echo ""
+          echo "⏳ Azure continuará deletando recursos em background."
+          echo "📌 Você pode acompanhar com:"
+          echo "   az group list --query \"[].name\" -o table"
+          echo ""
+          echo "✅ Pipeline de destroy finalizado."
