@@ -11,9 +11,7 @@ resource "azurerm_resource_group" "network" {
   })
 
   lifecycle {
-
-    prevent_destroy = false
-
+    prevent_destroy       = false
     create_before_destroy = true
   }
 }
