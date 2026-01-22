@@ -23,25 +23,6 @@ resource "azurerm_key_vault" "devops" {
   })
 }
 
-# Access Policy para o Service Principal do Terraform (mantido)
-resource "azurerm_key_vault_access_policy" "terraform" {
-  key_vault_id = azurerm_key_vault.devops.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = data.azurerm_client_config.current.object_id
-
-  key_permissions = [
-    "Get", "List", "Create", "Delete", "Update", "Import", "Backup", "Restore"
-  ]
-
-  secret_permissions = [
-    "Get", "List", "Set", "Delete", "Backup", "Restore", "Purge"
-  ]
-
-  certificate_permissions = [
-    "Get", "List", "Create", "Delete", "Update", "Import", "Backup", "Restore"
-  ]
-}
-
 # Secrets (mantidos, mas simplificados)
 resource "azurerm_key_vault_secret" "postgresql_host" {
   name         = "postgresql-host"

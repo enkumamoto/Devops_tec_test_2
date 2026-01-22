@@ -8,7 +8,8 @@ resource "azurerm_subnet" "aca" {
     name = "aca-delegation"
 
     service_delegation {
-      name = "Microsoft.Web/serverFarms"
+      name = "Microsoft.App/environments"
+
       actions = [
         "Microsoft.Network/virtualNetworks/subnets/action"
       ]
