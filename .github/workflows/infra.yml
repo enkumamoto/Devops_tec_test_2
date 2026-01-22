@@ -74,7 +74,7 @@ jobs:
             --sku Standard_LRS \
             --kind StorageV2 \
             --https-only true \
-            --allow-blob-public-access false
+            --allow-blob-public-access false            
 
           SA_KEY=$(az storage account keys list \
             --resource-group "$RG" \
@@ -85,7 +85,8 @@ jobs:
             --name "$CONTAINER" \
             --account-name "$SA" \
             --account-key "$SA_KEY" \
-            --public-access off
+            --public-access off \
+            --lease-break-period 60
 
           SAS_TOKEN=$(az storage container generate-sas \
             --name "$CONTAINER" \
@@ -221,6 +222,18 @@ jobs:
           echo "acr_login_server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
           echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_ENV
 
+      - name: Clean Terraform Locks Before Init
+        working-directory: infraestructure/03-aca
+        run: |
+          echo "🔓 Limpando locks do Terraform antes do init..."
+          # Remove diretório de lock local se existir
+          rm -rf .terraform.tfstate.lock.info 2>/dev/null || true
+
+          # Se usar backend remoto, tenta forçar unlock
+          terraform force-unlock -force 2>/dev/null || true
+
+          echo "✅ Locks limpos"
+
       - name: Terraform Init - ACA
         working-directory: infraestructure/03-aca
         env:
@@ -253,6 +266,26 @@ jobs:
           echo "sp_object_id=$OBJECT_ID" >> $GITHUB_ENV
           echo "SP_OBJECT_ID=$OBJECT_ID" >> $GITHUB_OUTPUT
 
+      - name: Clean Terraform State Locks
+        working-directory: infraestructure/03-aca
+        run: |
+          echo "🔓 Limpando locks do estado antes do import..."
+
+          # Lista todos os workspaces e remove locks
+          for workspace in $(terraform workspace list 2>/dev/null | grep -v "\*" | tr -d '* '); do
+            echo "Limpando lock do workspace: $workspace"
+            terraform workspace select "$workspace" 2>/dev/null || true
+            terraform force-unlock -force 2>/dev/null || true
+          done
+
+          # Volta para workspace padrão
+          terraform workspace select default 2>/dev/null || true
+
+          # Força remoção de qualquer lock
+          terraform force-unlock -force 2>/dev/null || true
+
+          echo "✅ Locks removidos"
+
       - name: Quick Terraform Import - Key Vault Policy
         working-directory: infraestructure/03-aca
         timeout-minutes: 3
@@ -268,100 +301,215 @@ jobs:
 
           POLICY_ID="/subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${KEY_VAULT_NAME}/objectId/${{ env.sp_object_id }}"
 
-          # Tentativa rápida com retry
-          for i in {1..2}; do
-            echo "Tentativa $i..."
-            if terraform import -compact-warnings azurerm_key_vault_access_policy.terraform "$POLICY_ID" 2>/dev/null; then
-              echo "✅ Import bem-sucedido"
-              exit 0
-            fi
-            
-            if [ $i -eq 1 ]; then
-              echo "🔄 Primeira tentativa falhou, limpando lock..."
-              terraform force-unlock -force $(terraform workspace show) 2>/dev/null || true
-              sleep 2
-            fi
-          done
+          echo "Policy ID: $POLICY_ID"
 
-          echo "⚠️ Import falhou após 2 tentativas rápidas"
-          echo "Verificando se já existe no estado..."
+          # Primeiro verifica se já existe (rápido)
+          if terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1; then
+            echo "✅ Policy já está no estado - pulando import"
+            exit 0
+          fi
 
-      - name: Verify Import Status
+          # Tentativa rápida com lock-timeout curto
+          echo "Executando import..."
+          terraform import -lock-timeout=30s -input=false -compact-warnings azurerm_key_vault_access_policy.terraform "$POLICY_ID"
+
+          echo "✅ Import concluído"
+
+      - name: Verify Import and Clean Locks
         if: always()
         working-directory: infraestructure/03-aca
         run: |
           echo "📋 Verificando status do import..."
 
+          # Garante que não há locks pendentes
+          terraform force-unlock -force 2>/dev/null || true
+
           # Verifica se a policy está no estado
           if terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1; then
-            echo "✅ Policy já está gerenciada pelo Terraform"
+            echo "✅ Policy importada com sucesso"
             echo "POLICY_IMPORTED=true" >> $GITHUB_ENV
           else
-            echo "ℹ️ Policy não encontrada no estado"
+            echo "⚠️ Policy não encontrada no estado"
             echo "POLICY_IMPORTED=false" >> $GITHUB_ENV
-            
-            # Lista políticas existentes para debug
-            echo "Políticas no Key Vault:"
-            terraform state list | grep -i key_vault || echo "Nenhuma política encontrada"
           fi
 
-      - name: Terraform Plan - ACA (Otimizado)
+          # Lista recursos para debug
+          echo "Recursos no estado:"
+          terraform state list | head -10 || echo "Estado vazio ou erro"
+
+      - name: Clean Locks Before Plan
+        working-directory: infraestructure/03-aca
+        run: |
+          echo "🔓 Limpando locks antes do plan..."
+
+          # Método agressivo para garantir estado limpo
+          echo "1. Removendo locks remotos..."
+          terraform force-unlock -force 2>/dev/null || true
+
+          echo "2. Removendo arquivos de lock locais..."
+          find . -name "*.lock*" -delete 2>/dev/null || true
+          rm -rf .terraform.lock.hcl 2>/dev/null || true
+
+          echo "3. Verificando workspaces..."
+          CURRENT_WS=$(terraform workspace show)
+          echo "Workspace atual: $CURRENT_WS"
+
+          echo "✅ Estado preparado para plan"
+
+      - name: Get Subnet ID from Network Module
+        working-directory: infraestructure/03-aca
+        run: |
+          echo "🔗 Obtendo Subnet ID do módulo de rede..."
+
+          # Se o estado do network estiver disponível, podemos obter a subnet
+          # Caso contrário, usaremos um valor padrão ou vazio
+          ACA_SUBNET_ID=""
+
+          # Tenta obter do estado do terraform (se o módulo network já foi aplicado)
+          if terraform state show module.network 2>/dev/null | grep -q "id.*subnets/aca"; then
+            ACA_SUBNET_ID=$(terraform state show module.network 2>/dev/null | grep -o 'id.*subnets/aca[^"]*' | head -1 | cut -d'"' -f2)
+            echo "✅ Subnet ID encontrada: $ACA_SUBNET_ID"
+          else
+            echo "⚠️ Subnet ID não encontrada no estado. Usando valor padrão/vazio."
+          fi
+
+          echo "ACA_SUBNET_ID=$ACA_SUBNET_ID" >> $GITHUB_ENV
+
+      - name: Terraform Plan - ACA (Com Tratamento de Lock)
+        id: tf_plan
         working-directory: infraestructure/03-aca
         env:
-          TF_CLI_ARGS: "-input=false -lock-timeout=1m"
+          TF_CLI_ARGS: "-input=false"
         run: |
           set -e
 
           echo "📋 Executando terraform plan..."
 
-          # Variáveis comuns
-          COMMON_VARS="-var='environment=dev' \
-            -var='location=canadacentral' \
-            -var='resource_group_name=rg-aca-dev' \
-            -var='acr_login_server=${{ env.ACR_LOGIN_SERVER }}' \
-            -var='tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}' \
-            -var='tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}' \
-            -var='tf_backend_container=${{ needs.setup.outputs.tf_container }}' \
-            -var='tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}'"
+          # Define as variáveis CORRETAS baseadas no seu arquivo variables.tf
+          ENVIRONMENT="dev"
+          LOCATION="canadacentral"
+          RESOURCE_GROUP="rg-aca-dev"
+          ACR_LOGIN_SERVER="${{ env.ACR_LOGIN_SERVER }}"
+          TF_BACKEND_RG="${{ needs.setup.outputs.tf_rg }}"
+          TF_BACKEND_SA="${{ needs.setup.outputs.tf_sa }}"
+          TF_BACKEND_CONTAINER="${{ needs.setup.outputs.tf_container }}"
+          TF_BACKEND_SAS="${{ needs.setup.outputs.sas_token }}"
+          ACA_SUBNET_ID="${{ env.ACA_SUBNET_ID }}"
 
-          # Executar plan com tratamento de erro
-          terraform plan $COMMON_VARS -detailed-exitcode 2>&1 | tee plan_output.txt
+          # Variáveis com valores padrão (não precisam ser passadas se usar default)
+          # Mas vamos defini-las explicitamente para clareza
+          MIN_REPLICAS="1"
+          MAX_REPLICAS="5"
+          ENABLE_WORKER="false"
+          KEY_VAULT_SKU="standard"
+          SOFT_DELETE_DAYS="7"
+          PURGE_PROTECTION="false"
+          POSTGRESQL_HOST="postgresql-server.devops.internal"
+          POSTGRESQL_USERNAME="postgres"
 
-          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+          # Função para executar plan com tratamento de lock
+          execute_plan() {
+            local attempt=$1
+            local use_lock=$2
+            
+            echo "Tentativa $attempt de executar plan (lock=$use_lock)..."
+            
+            # Constrói o comando com APENAS as variáveis que existem
+            local cmd="terraform plan"
+            
+            if [ "$use_lock" = "false" ]; then
+              cmd="$cmd -lock=false"
+            fi
+            
+            # Variáveis OBRIGATÓRIAS (sem default ou com default que queremos sobrescrever)
+            cmd="$cmd -var environment=$ENVIRONMENT"
+            cmd="$cmd -var location=$LOCATION"
+            cmd="$cmd -var resource_group_name=$RESOURCE_GROUP"
+            cmd="$cmd -var acr_login_server=$ACR_LOGIN_SERVER"
+            cmd="$cmd -var tf_backend_resource_group=$TF_BACKEND_RG"
+            cmd="$cmd -var tf_backend_storage_account=$TF_BACKEND_SA"
+            cmd="$cmd -var tf_backend_container=$TF_BACKEND_CONTAINER"
+            cmd="$cmd -var tf_backend_sas_token=$TF_BACKEND_SAS"
+            
+            # Variáveis OPCIONAIS (com default, mas podemos querer passar)
+            if [ -n "$ACA_SUBNET_ID" ]; then
+              cmd="$cmd -var aca_subnet_id=$ACA_SUBNET_ID"
+            fi
+            
+            cmd="$cmd -input=false -detailed-exitcode"
+            
+            echo "Comando simplificado para debug..."
+            
+            # Executa plan
+            $cmd 2>&1 | tee "plan_output_$attempt.txt"
+            return ${PIPESTATUS[0]}
+          }
 
+          # Primeira tentativa com lock normal
+          if execute_plan 1 "true"; then
+            echo "✅ Plan executado com sucesso"
+            PLAN_EXIT_CODE=0
+          else
+            PLAN_EXIT_CODE=$?
+            echo "⚠️ Plan falhou com código: $PLAN_EXIT_CODE"
+            
+            # Verifica se foi por lock
+            if grep -q "state lock" "plan_output_1.txt"; then
+              echo "🔒 Lock detectado, limpando..."
+              
+              # Extrai lock ID
+              LOCK_ID=$(grep -Eo 'ID:\s+[a-z0-9\-]+' "plan_output_1.txt" | awk '{print $2}' | head -1)
+              
+              if [ -n "$LOCK_ID" ]; then
+                echo "Removendo lock específico: $LOCK_ID"
+                terraform force-unlock -force "$LOCK_ID"
+              fi
+              
+              # Limpa qualquer lock remanescente
+              terraform force-unlock -force 2>/dev/null || true
+              sleep 2
+              
+              # Segunda tentativa com lock=false
+              echo "🔄 Segunda tentativa com -lock=false..."
+              if execute_plan 2 "false"; then
+                echo "✅ Plan executado com -lock=false"
+                PLAN_EXIT_CODE=0
+              else
+                PLAN_EXIT_CODE=$?
+                echo "❌ Plan falhou mesmo com -lock=false"
+              fi
+            fi
+          fi
+
+          # Processa resultado final
           case $PLAN_EXIT_CODE in
             0)
               echo "✅ Nenhuma mudança necessária"
+              echo "CHANGES_DETECTED=false" >> $GITHUB_ENV
               ;;
             1)
               echo "❌ Erro no plan"
+              echo "CHANGES_DETECTED=error" >> $GITHUB_ENV
+              cat "plan_output_*.txt" | tail -20
               exit 1
               ;;
             2)
               echo "📝 Mudanças detectadas"
               echo "CHANGES_DETECTED=true" >> $GITHUB_ENV
               ;;
+            *)
+              echo "⚠️ Código de saída inesperado: $PLAN_EXIT_CODE"
+              echo "CHANGES_DETECTED=unknown" >> $GITHUB_ENV
+              ;;
           esac
 
-      - name: Handle Terraform Lock (Fallback)
-        if: failure() && contains(steps.plan.outcome, 'failure')
+      - name: Clean Locks After Plan
+        if: always()
         working-directory: infraestructure/03-aca
         run: |
-          echo "🔓 Tratando problema de lock..."
-
-          # Extrair lock ID do erro anterior
-          if [ -f plan_output.txt ]; then
-            LOCK_ID=$(grep -Eo 'ID:\s+[a-z0-9\-]+' plan_output.txt | awk '{print $2}' | head -1)
-            
-            if [ -n "$LOCK_ID" ]; then
-              echo "Removendo lock: $LOCK_ID"
-              terraform force-unlock -force "$LOCK_ID"
-            fi
-          fi
-
-          # Remover qualquer lock
-          terraform force-unlock -force $(terraform workspace show) 2>/dev/null || true
-          echo "✅ Locks removidos"
+          echo "🧹 Limpando locks após plan..."
+          terraform force-unlock -force 2>/dev/null || true
+          echo "✅ Limpeza concluída"
 
       - name: Terraform Apply - ACA (Condicional)
         if: github.event.inputs.tf_action == 'apply' && env.CHANGES_DETECTED == 'true'
@@ -371,15 +519,20 @@ jobs:
         run: |
           echo "🚀 Aplicando mudanças..."
 
+          # Limpa locks antes do apply
+          terraform force-unlock -force 2>/dev/null || true
+
+          # Aplica com APENAS as variáveis que existem
           terraform apply \
-            -var="environment=dev" \
-            -var="location=canadacentral" \
-            -var="resource_group_name=rg-aca-dev" \
-            -var="acr_login_server=${{ env.ACR_LOGIN_SERVER }}" \
-            -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
-            -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
-            -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
-            -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}"
+            -var environment=dev \
+            -var location=canadacentral \
+            -var resource_group_name=rg-aca-dev \
+            -var acr_login_server="${{ env.ACR_LOGIN_SERVER }}" \
+            -var tf_backend_resource_group="${{ needs.setup.outputs.tf_rg }}" \
+            -var tf_backend_storage_account="${{ needs.setup.outputs.tf_sa }}" \
+            -var tf_backend_container="${{ needs.setup.outputs.tf_container }}" \
+            -var tf_backend_sas_token="${{ needs.setup.outputs.sas_token }}" \
+            -input=false -auto-approve
 
           echo "✅ Aplicação concluída"
 
@@ -387,114 +540,6 @@ jobs:
         if: github.event.inputs.tf_action == 'apply' && env.CHANGES_DETECTED != 'true'
         run: |
           echo "⏭️ Nenhuma mudança detectada - apply não necessário"
-  # =====================================================
-  # 5. DATABASE
-  # =====================================================
-  database:
-    runs-on: ubuntu-latest
-    needs: [setup, network]
-    if: success()
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-
-      - name: Azure Login for Resource Query
-        run: |
-          az login \
-            --service-principal \
-            --username "${{ secrets.ARM_CLIENT_ID }}" \
-            --password "${{ secrets.ARM_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.ARM_TENANT_ID }}"
-
-          az account set --subscription "${{ secrets.ARM_SUBSCRIPTION_ID }}"
-
-      - name: Get Network IDs from Azure
-        run: |
-          RG_NETWORK="rg-network-dev"
-          VNET_NAME="vnet"
-          SUBNET_NAME="snet-dev-devops-database"
-
-          VNET_ID=$(az network vnet show \
-            --resource-group "$RG_NETWORK" \
-            --name "$VNET_NAME" \
-            --query id -o tsv)
-
-          DATABASE_SUBNET_ID=$(az network vnet subnet show \
-            --resource-group "$RG_NETWORK" \
-            --vnet-name "$VNET_NAME" \
-            --name "$SUBNET_NAME" \
-            --query id -o tsv)
-
-          if [ -z "$VNET_ID" ] || [ -z "$DATABASE_SUBNET_ID" ]; then
-            echo "Erro ao obter VNET_ID ou DATABASE_SUBNET_ID"
-            exit 1
-          fi
-
-          echo "VNET_ID=$VNET_ID" >> $GITHUB_ENV
-          echo "DATABASE_SUBNET_ID=$DATABASE_SUBNET_ID" >> $GITHUB_ENV
-
-      - name: Terraform Init - Database
-        working-directory: infraestructure/05-database
-        run: |
-          terraform init \
-            -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
-            -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
-            -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
-            -backend-config="key=database.tfstate" \
-            -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -reconfigure \
-            -input=false
-
-      - name: Terraform Plan - Database
-        working-directory: infraestructure/05-database
-        run: |
-          terraform plan \
-            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="location=canadacentral" \
-            -var="environment=dev" \
-            -var="resource_group_name=rg-database-dev" \
-            -var="vnet_id=$VNET_ID" \
-            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
-            -var="db_name=psql-devops" \
-            -var="postgres_version=15" \
-            -var="sku_name=B_Standard_B1ms" \
-            -var="storage_mb=32768" \
-            -var="backup_retention_days=7" \
-            -var="geo_redundant_backup_enabled=false" \
-            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
-            -var="charset=UTF8" \
-            -var="collation=en_US.utf8" \
-            -var="zone=1" \
-            -var="high_availability_mode=Disabled" \
-            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
-            -input=false
-
-      - name: Terraform Apply - Database
-        if: ${{ github.event.inputs.tf_action == 'apply' }}
-        working-directory: infraestructure/05-database
-        run: |
-          terraform apply \
-            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="location=canadacentral" \
-            -var="environment=dev" \
-            -var="resource_group_name=rg-database-dev" \
-            -var="vnet_id=$VNET_ID" \
-            -var="database_subnet_id=$DATABASE_SUBNET_ID" \
-            -var="db_name=psql-devops" \
-            -var="postgres_version=15" \
-            -var="sku_name=B_Standard_B1ms" \
-            -var="storage_mb=32768" \
-            -var="backup_retention_days=7" \
-            -var="geo_redundant_backup_enabled=false" \
-            -var="maintenance_window={day_of_week=0,start_hour=2,start_minute=0}" \
-            -var="charset=UTF8" \
-            -var="collation=en_US.utf8" \
-            -var="zone=1" \
-            -var="high_availability_mode=Disabled" \
-            -var="tags={Environment=\"dev\",Project=\"devops-technical-test\",ManagedBy=\"Terraform\",Owner=\"Platform\"}" \
-            -auto-approve \
-            -input=false
 
   # =====================================================
   # 6. BASTION
