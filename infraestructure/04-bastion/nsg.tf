@@ -3,24 +3,20 @@ resource "azurerm_network_security_group" "bastion" {
   location            = var.location
   resource_group_name = azurerm_resource_group.bastion.name
 
-
-  dynamic "security_rule" {
-    for_each = var.allowed_source_ips
-
-    content {
-      name                       = "Allow-SSH-${replace(replace(security_rule.value, ".", "-"), "/", "-")}"
-      priority                   = 100 + index(var.allowed_source_ips, security_rule.value)
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_address_prefix      = security_rule.value
-      destination_port_range     = "22"
-      source_port_range          = "*"
-      destination_address_prefix = "*"
-    }
+  # Remova o bloco dynamic inteiro e substitua por esta regra única para permitir SSH de qualquer IP
+  security_rule {
+    name                       = "Allow-SSH-Any"
+    priority                   = 100 # Prioridade baixa para ser avaliada primeiro
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_address_prefix      = "*" # Permite de qualquer IP externo
+    source_port_range          = "*"
+    destination_address_prefix = "*"  # Aplica à VM bastion (ou ajuste se necessário)
+    destination_port_range     = "22" # Porta SSH
   }
 
-
+  # Mantenha as outras regras existentes
   security_rule {
     name                       = "AllowVnetInBound"
     priority                   = 200
@@ -33,7 +29,6 @@ resource "azurerm_network_security_group" "bastion" {
     destination_port_range     = "*"
   }
 
-
   security_rule {
     name                       = "AllowAzureLoadBalancerInBound"
     priority                   = 300
@@ -45,7 +40,6 @@ resource "azurerm_network_security_group" "bastion" {
     destination_address_prefix = "*"
     destination_port_range     = "*"
   }
-
 
   security_rule {
     name                       = "DenyAllInBound"
