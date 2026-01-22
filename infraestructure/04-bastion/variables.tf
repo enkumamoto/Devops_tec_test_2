@@ -35,7 +35,7 @@ variable "bastion_subnet_id" {
 
 variable "aca_subnet_address_prefixes" {
   description = "aca subnet CIDR (for NSG rules)"
-  type        = list(string)
+  type        = string
 }
 
 variable "vm_name" {
