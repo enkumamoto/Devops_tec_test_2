@@ -181,17 +181,17 @@ variable "tf_backend_sas_token" {
   sensitive   = true
 }
 
-variable "aca_subnet_address_prefixes" {
-  description = "CIDR for aca subnet"
-  type        = list(string)
-}
+# variable "aca_subnet_address_prefixes" {
+#   description = "CIDR for aca subnet"
+#   type        = list(string)
+# }
 
-variable "database_subnet_address_prefixes" {
-  description = "CIDR for Database subnet"
-  type        = list(string)
-}
+# variable "database_subnet_address_prefixes" {
+#   description = "CIDR for Database subnet"
+#   type        = list(string)
+# }
 
-variable "bastion_subnet_address_prefixes" {
-  description = "CIDR for Bastion subnet"
-  type        = list(string)
-}
+# variable "bastion_subnet_address_prefixes" {
+#   description = "CIDR for Bastion subnet"
+#   type        = list(string)
+# }
