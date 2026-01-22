@@ -236,6 +236,7 @@ jobs:
       - name: Terraform Plan - ACA
         working-directory: infraestructure/03-aca
         run: |
+          terraform plan || terraform force-unlock -force $(terraform show -json | jq -r '.lock.id')
           terraform plan \
             -var="environment=dev" \
             -var="location=canadacentral" \
