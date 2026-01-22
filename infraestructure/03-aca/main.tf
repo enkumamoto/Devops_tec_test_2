@@ -9,7 +9,7 @@ resource "azurerm_resource_group" "aca" {
 resource "azurerm_log_analytics_workspace" "aca" {
   name                = "log-aca-${var.environment}"
   location            = var.location
-  resource_group_name = data.azurerm_resource_group.aca.name
+  resource_group_name = azurerm_resource_group.aca.name
   sku                 = "PerGB2018"
   retention_in_days   = 30
 
@@ -20,7 +20,7 @@ resource "azurerm_log_analytics_workspace" "aca" {
 resource "azurerm_container_app_environment" "devops" {
   name                       = "cae-${var.environment}"
   location                   = var.location
-  resource_group_name        = data.azurerm_resource_group.aca.name
+  resource_group_name        = azurerm_resource_group.aca.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.aca.id
 
   infrastructure_subnet_id = data.terraform_remote_state.network.outputs.aca_subnet_id

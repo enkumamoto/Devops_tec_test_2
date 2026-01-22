@@ -2,7 +2,7 @@
 resource "azurerm_container_app" "fastapi" {
   name                         = "fastapi-${var.environment}"
   container_app_environment_id = azurerm_container_app_environment.devops.id
-  resource_group_name          = data.azurerm_resource_group.aca.name
+  resource_group_name          = azurerm_resource_group.aca.name
   revision_mode                = "Single" # Single = sempre latest revision
 
   template {
@@ -60,7 +60,7 @@ resource "azurerm_container_app" "worker" {
 
   name                         = "worker-${var.environment}"
   container_app_environment_id = azurerm_container_app_environment.devops.id
-  resource_group_name          = data.azurerm_resource_group.aca.name
+  resource_group_name          = azurerm_resource_group.aca.name
   revision_mode                = "Single"
 
   template {

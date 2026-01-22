@@ -33,7 +33,7 @@ output "log_analytics_workspace_id" {
 
 output "resource_group_name" {
   description = "The name of the Resource Group"
-  value       = data.azurerm_resource_group.aca.name
+  value       = azurerm_resource_group.aca.name
 }
 
 output "resource_group_id" {
@@ -85,7 +85,7 @@ output "location" {
 
 output "aca_connection_command" {
   description = "Azure CLI command to get ACA logs"
-  value       = "az containerapp logs show --name fastapi-${var.environment} --resource-group ${data.azurerm_resource_group.aca.name} --follow"
+  value       = "az containerapp logs show --name fastapi-${var.environment} --resource-group ${azurerm_resource_group.aca.name} --follow"
 }
 
 output "aca_app_fqdn" {

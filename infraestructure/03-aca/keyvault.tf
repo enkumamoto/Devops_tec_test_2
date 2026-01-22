@@ -2,7 +2,7 @@
 resource "azurerm_key_vault" "devops" {
   name                = coalesce(var.key_vault_name, "kv-aca-${var.environment}")
   location            = var.location
-  resource_group_name = data.azurerm_resource_group.aca.name
+  resource_group_name = azurerm_resource_group.aca.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = var.key_vault_sku
 
