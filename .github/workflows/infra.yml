@@ -85,8 +85,7 @@ jobs:
             --name "$CONTAINER" \
             --account-name "$SA" \
             --account-key "$SA_KEY" \
-            --public-access off \
-            --lease-break-period 60
+            --public-access off
 
           SAS_TOKEN=$(az storage container generate-sas \
             --name "$CONTAINER" \
