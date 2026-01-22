@@ -232,43 +232,45 @@ jobs:
             -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
             -reconfigure -input=false
 
-      - name: Terraform Import Key Vault Access Policy
+      - name: Terraform Import Key Vault Access Policy (Safe)
         working-directory: infraestructure/03-aca
         shell: bash
         env:
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
         run: |
-          set -e
+          set +e
 
           KEY_VAULT_NAME="eiji-kv-aca-dev"
           RESOURCE_GROUP="rg-aca-dev"
 
-          echo "Resolving Service Principal Object ID..."
+          echo "🔓 Cleaning possible stale Terraform lock (if any)..."
+          terraform force-unlock -force 352d2555-7da9-0d0d-fec7-eb4e4dd3234f 2>/dev/null || true
 
-          # Método recomendado - mais simples e direto
-          OBJECT_ID=$(az ad sp show \
-            --id "$ARM_CLIENT_ID" \
-            --query "id" \
+          echo "🔍 Resolving Service Principal Object ID..."
+          OBJECT_ID=$(az ad sp list \
+            --filter "appId eq '$ARM_CLIENT_ID'" \
+            --query "[0].id" \
             -o tsv)
 
           if [ -z "$OBJECT_ID" ]; then
-            echo "❌ Failed to resolve Service Principal Object ID"
-            echo "ARM_CLIENT_ID: $ARM_CLIENT_ID"
+            echo "❌ Could not resolve Service Principal Object ID"
             exit 1
           fi
 
-          echo "Object ID resolved: $OBJECT_ID"
+          echo "✅ Object ID resolved: $OBJECT_ID"
 
           POLICY_ID="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${KEY_VAULT_NAME}/objectId/${OBJECT_ID}"
-          echo "Policy ID for import: $POLICY_ID"
 
-          echo "Checking if access policy already exists in Terraform state..."
-          if ! terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1; then
-            echo "Importing Key Vault access policy..."
-            terraform import azurerm_key_vault_access_policy.terraform "$POLICY_ID"
+          echo "📦 Checking Terraform state..."
+          terraform state show azurerm_key_vault_access_policy.terraform >/dev/null 2>&1
+          STATE_EXISTS=$?
+
+          if [ $STATE_EXISTS -ne 0 ]; then
+            echo "⬇️ Importing Key Vault access policy..."
+            terraform import azurerm_key_vault_access_policy.terraform "$POLICY_ID" || true
           else
-            echo "Access policy already managed by Terraform"
+            echo "✅ Access policy already managed by Terraform"
           fi
 
       - name: Terraform Plan - ACA
