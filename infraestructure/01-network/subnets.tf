@@ -1,8 +1,8 @@
-resource "azurerm_subnet" "aks" {
-  name                 = local.subnet_names.aks
+resource "azurerm_subnet" "aca" {
+  name                 = local.subnet_names.aca
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.devops.name
-  address_prefixes     = var.aks_subnet_address_prefixes
+  address_prefixes     = var.aca_subnet_address_prefixes
 
   service_endpoints = [
     "Microsoft.ContainerRegistry",

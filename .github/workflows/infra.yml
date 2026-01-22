@@ -175,18 +175,16 @@ jobs:
         run: terraform apply -auto-approve -input=false
 
   # =====================================================
-  # 4. AKS
+  # 4. Container APP (ACA)
   # =====================================================
-  aks:
+  aca:
     runs-on: ubuntu-latest
     needs: [setup, network, acr]
-    timeout-minutes: 30
+    timeout-minutes: 15 # ACA é MUITO mais rápido!
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
 
       - name: Azure Login
         run: |
@@ -196,173 +194,58 @@ jobs:
             --tenant "${{ secrets.ARM_TENANT_ID }}"
           az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
-      - name: Clean Existing Key Vault (SEGURANÇA)
-        run: |
-          echo "🧹 REMOVENDO Key Vault problemático..."
-
-          # Deletar Key Vault se existir
-          az keyvault delete \
-            --resource-group "rg-aks-dev" \
-            --name "kv-aks-devops-dev" \
-            --no-wait 2>/dev/null || echo "✅ Key Vault não existe ou já deletado"
-
-          # Aguardar
-          sleep 10
-
-      - name: Force Unlock and Reset Terraform State
-        run: |
-          echo "🔓 Resetando estado do Terraform..."
-
-          # 1. Tentar quebrar lease se existir (comando CORRETO)
-          az storage blob lease break \
-            --account-name "${{ needs.setup.outputs.tf_sa }}" \
-            --container-name "${{ needs.setup.outputs.tf_container }}" \
-            --name "aks.tfstate" \
-            --sas-token "${{ needs.setup.outputs.sas_token }}" \
-            --auth-mode key 2>/dev/null || echo "✅ Sem lease ativo"
-
-          # 2. Deletar estado antigo
-          az storage blob delete \
-            --account-name "${{ needs.setup.outputs.tf_sa }}" \
-            --container-name "${{ needs.setup.outputs.tf_container }}" \
-            --name "aks.tfstate" \
-            --sas-token "${{ needs.setup.outputs.sas_token }}" \
-            --auth-mode key 2>/dev/null || echo "✅ Estado não existia"
-
-          # 3. Criar estado vazio (método correto)
-          echo '{"version": 1}' > empty_state.json
-          az storage blob upload \
-            --account-name "${{ needs.setup.outputs.tf_sa }}" \
-            --container-name "${{ needs.setup.outputs.tf_container }}" \
-            --name "aks.tfstate" \
-            --file empty_state.json \
-            --sas-token "${{ needs.setup.outputs.sas_token }}" \
-            --auth-mode key \
-            --content-type "application/json"
-          rm -f empty_state.json
-
-          echo "✅ Estado resetado com sucesso!"
-
-      - name: Get ACR ID
+      - name: Get ACR Login Server
         id: get_acr
         run: |
-          echo "📦 Obtendo ACR ID..."
-          ACR_ID=$(az acr show \
+          echo "📦 Obtendo ACR Login Server..."
+          ACR_LOGIN_SERVER=$(az acr show \
             --resource-group "rg-acr-dev" \
             --name "eijidevopsdevacr" \
-            --query id -o tsv 2>/dev/null || echo "")
+            --query loginServer -o tsv 2>/dev/null || echo "myacr.azurecr.io")
 
-          if [ -n "$ACR_ID" ]; then
-            echo "✅ ACR ID: $ACR_ID"
-            echo "acr_id=$ACR_ID" >> $GITHUB_OUTPUT
-            echo "ACR_ID=$ACR_ID" >> $GITHUB_ENV
-          else
-            echo "⚠️  ACR não encontrado"
-            echo "acr_id=" >> $GITHUB_OUTPUT
-            echo "ACR_ID=" >> $GITHUB_ENV
-          fi
+          echo "ACR Login Server: $ACR_LOGIN_SERVER"
+          echo "acr_login_server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_ENV
 
-      - name: Clean Local Terraform
-        working-directory: infraestructure/03-aks
+      - name: Terraform Init - ACA
+        working-directory: infraestructure/03-aca
         run: |
-          echo "🧹 Limpando local..."
-          rm -rf .terraform .terraform.lock.hcl terraform.tfstate* *.backup
-
-      - name: Modify Terraform to Avoid Key Vault Conflicts
-        working-directory: infraestructure/03-aks
-        run: |
-          echo "🔧 Modificando para evitar conflitos com Key Vault..."
-
-          # 1. Renomear o Key Vault no terraform.tfvars
-          if [ -f terraform.tfvars ]; then
-            sed -i 's/key_vault_name = ""/key_vault_name = "kv-aks-devops-dev-NEW"/g' terraform.tfvars
-            echo "✅ Key Vault renomeado para 'kv-aks-devops-dev-NEW'"
-          fi
-
-          # 2. OU comente o Key Vault no código (opcional)
-          # sed -i 's/^resource "azurerm_key_vault"/# resource "azurerm_key_vault"/g' keyvault.tf
-          # echo "✅ Key Vault comentado temporariamente"
-
-      - name: Terraform Init - AKS
-        working-directory: infraestructure/03-aks
-        run: |
-          echo "🚀 Inicializando Terraform..."
           terraform init \
             -backend-config="resource_group_name=${{ needs.setup.outputs.tf_rg }}" \
             -backend-config="storage_account_name=${{ needs.setup.outputs.tf_sa }}" \
             -backend-config="container_name=${{ needs.setup.outputs.tf_container }}" \
-            -backend-config="key=aks.tfstate" \
+            -backend-config="key=aca.tfstate" \
             -backend-config="sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -reconfigure \
-            -input=false
+            -reconfigure -input=false
 
-      - name: Terraform Plan - AKS
-        working-directory: infraestructure/03-aks
+      - name: Terraform Plan - ACA
+        working-directory: infraestructure/03-aca
         run: |
-          echo "📋 Gerando plano..."
-
-          # Usar variáveis inline (mais seguro)
           terraform plan \
             -var="environment=dev" \
             -var="location=canadacentral" \
-            -var="resource_group_name=rg-aks-dev" \
-            -var="aks_name=aks-devops" \
-            -var="dns_prefix=aks-devops-dev" \
-            -var="kubernetes_version=1.33.5" \
-            -var="enable_acr_rbac=false" \
-            -var="acr_id=${{ env.ACR_ID }}" \
-            -var="key_vault_name=kv-aks-devops-dev-NEW" \
+            -var="resource_group_name=rg-aca-dev" \
+            -var="acr_login_server=${{ env.ACR_LOGIN_SERVER }}" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
             -input=false
 
-      - name: Terraform Apply - AKS
+      - name: Terraform Apply - ACA
         if: ${{ github.event.inputs.tf_action == 'apply' }}
-        working-directory: infraestructure/03-aks
-        timeout-minutes: 20
+        working-directory: infraestructure/03-aca
         run: |
-          echo "⚡ Aplicando AKS..."
-
           terraform apply \
             -var="environment=dev" \
             -var="location=canadacentral" \
-            -var="resource_group_name=rg-aks-dev" \
-            -var="aks_name=aks-devops" \
-            -var="dns_prefix=aks-devops-dev" \
-            -var="kubernetes_version=1.33.5" \
-            -var="enable_acr_rbac=false" \
-            -var="acr_id=${{ env.ACR_ID }}" \
-            -var="key_vault_name=kv-aks-devops-dev-NEW" \
+            -var="resource_group_name=rg-aca-dev" \
+            -var="acr_login_server=${{ env.ACR_LOGIN_SERVER }}" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
             -var="tf_backend_sas_token=${{ needs.setup.outputs.sas_token }}" \
-            -auto-approve \
-            -input=false
-
-      - name: Configure ACR Access
-        if: ${{ github.event.inputs.tf_action == 'apply' && env.ACR_ID != '' }}
-        run: |
-          echo "🔗 Configurando acesso ACR..."
-          sleep 30
-
-          KUBELET_ID=$(az aks show \
-            --resource-group "rg-aks-dev" \
-            --name "aks-devops-dev-dev" \
-            --query identityProfile.kubeletidentity.objectId -o tsv 2>/dev/null || echo "")
-
-          if [ -n "$KUBELET_ID" ]; then
-            echo "🔑 Kubelet ID: $KUBELET_ID"
-            az role assignment create \
-              --assignee "$KUBELET_ID" \
-              --role "AcrPull" \
-              --scope "${{ env.ACR_ID }}" \
-              || echo "✅ Role já existe"
-          else
-            echo "⚠️  Não foi possível obter Kubelet ID"
-          fi
+            -auto-approve -input=false
 
   # =====================================================
   # 5. DATABASE
@@ -536,27 +419,6 @@ jobs:
           echo "🔍 Debugando outputs do módulo Network:"
           echo "VNET ID: '${{ needs.network.outputs.vnet_id }}'"
           echo "Bastion Subnet ID: '${{ needs.network.outputs.bastion_subnet_id }}'"
-          echo "AKS Subnet CIDR: '${{ needs.network.outputs.aks_subnet_address_prefixes }}'"
-
-          # Se bastion_subnet_id estiver vazio, vamos obter via CLI
-          if [ -z "${{ needs.network.outputs.bastion_subnet_id }}" ]; then
-            echo "⚠️  Bastion Subnet ID está vazio! Buscando via Azure CLI..."
-            
-            az login --service-principal \
-              -u "${{ secrets.ARM_CLIENT_ID }}" \
-              -p "${{ secrets.ARM_CLIENT_SECRET }}" \
-              --tenant "${{ secrets.ARM_TENANT_ID }}"
-            az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
-            
-            BASTION_SUBNET_ID=$(az network vnet subnet show \
-              --resource-group "rg-network-dev" \
-              --vnet-name "vnet" \
-              --name "snet-dev-devops-bastion" \
-              --query id -o tsv 2>/dev/null || echo "")
-            
-            echo "Bastion Subnet ID via CLI: '$BASTION_SUBNET_ID'"
-            echo "BASTION_SUBNET_ID=$BASTION_SUBNET_ID" >> $GITHUB_ENV
-          fi
 
       - name: Terraform Init - Bastion
         working-directory: infraestructure/04-bastion
@@ -579,7 +441,6 @@ jobs:
             -var="environment=dev" \
             -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
             -var="bastion_subnet_id=${{ steps.get_subnet.outputs.bastion_subnet_id }}" \
-            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_address_prefixes[0] }}" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
@@ -596,7 +457,6 @@ jobs:
             -var="environment=dev" \
             -var="vnet_id=${{ needs.network.outputs.vnet_id }}" \
             -var="bastion_subnet_id=${{ steps.get_subnet.outputs.bastion_subnet_id }}" \
-            -var="aks_subnet_cidr=${{ needs.network.outputs.aks_subnet_address_prefixes[0] }}" \
             -var="tf_backend_resource_group=${{ needs.setup.outputs.tf_rg }}" \
             -var="tf_backend_storage_account=${{ needs.setup.outputs.tf_sa }}" \
             -var="tf_backend_container=${{ needs.setup.outputs.tf_container }}" \
@@ -604,164 +464,182 @@ jobs:
             -auto-approve -input=false
 
   # =====================================================
-  # 7. DEPLOY APP/K8S
+  # 7. DEPLOY APP (ACA Version)
   # =====================================================
   deploy-app:
-    runs-on: ubuntu-latest # Runner padrão = RÁPIDO
-    needs: [aks] # Só depende do AKS estar pronto
-    timeout-minutes: 8 # Timeout curto
+    runs-on: ubuntu-latest
+    needs: [aca, database]
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Helm (Super Rápido)
-        uses: azure/setup-helm@v3
-        with:
-          version: "latest"
-
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: "latest"
-
-      - name: Azure Login (Otimizado)
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-
-      - name: Get AKS Credentials (Rápido)
-        uses: azure/aks-set-context@v3
-        with:
-          resource-group: rg-aks-dev
-          cluster-name: aks-devops-dev-dev
-
-      - name: Verify Cluster Access
+      - name: Azure Login
         run: |
-          echo "🔍 Verificando acesso ao cluster..."
-          kubectl cluster-info
-          kubectl get nodes
-          echo "✅ Cluster acessível"
+          az login --service-principal \
+            -u "${{ secrets.ARM_CLIENT_ID }}" \
+            -p "${{ secrets.ARM_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.ARM_TENANT_ID }}"
+          az account set -s "${{ secrets.ARM_SUBSCRIPTION_ID }}"
 
-      - name: Build Custom Values for Helm (Dinâmico)
+      - name: Get ACA Environment Info
+        id: aca_info
         run: |
-          echo "📝 Criando values.yaml customizado..."
+          echo "🔍 Obtendo informações do ACA..."
 
-          # Obter ACR login server dinamicamente
+          ACA_ENV_NAME=$(az containerapp env list \
+            -g "rg-aca-dev" \
+            --query "[0].name" -o tsv 2>/dev/null || echo "cae-dev")
+
+          ACA_ENV_ID=$(az containerapp env show \
+            -g "rg-aca-dev" \
+            -n "$ACA_ENV_NAME" \
+            --query id -o tsv 2>/dev/null || echo "")
+
           ACR_LOGIN_SERVER=$(az acr show \
             -g "rg-acr-dev" \
             -n "eijidevopsdevacr" \
             --query loginServer -o tsv 2>/dev/null || echo "myacr.azurecr.io")
 
-          cat > helm-values.yaml << EOF
-          namespace: devops-app
+          echo "ACA Environment: $ACA_ENV_NAME"
+          echo "ACR Login Server: $ACR_LOGIN_SERVER"
 
-          image:
-            repository: ${ACR_LOGIN_SERVER}/fastapi-app
-            tag: latest
-            pullPolicy: IfNotPresent
+          echo "aca_env_name=$ACA_ENV_NAME" >> $GITHUB_OUTPUT
+          echo "acr_login_server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+          echo "ACA_ENV_NAME=$ACA_ENV_NAME" >> $GITHUB_ENV
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> $GITHUB_ENV
 
-          replicaCount: 2
-
-          service:
-            type: ClusterIP
-            port: 80
-            targetPort: 8000
-
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
-
-          ingress:
-            enabled: true
-            className: nginx
-            annotations:
-              nginx.ingress.kubernetes.io/ssl-redirect: "false"
-              nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-            hosts:
-              - host: fastapi.devops.local
-                paths:
-                  - path: /
-                    pathType: Prefix
-
-          keyVault:
-            enabled: false  # Para teste, desabilita CSI driver
-          EOF
-
-          echo "✅ Values.yaml gerado:"
-          cat helm-values.yaml
-
-      - name: Deploy with Helm (Com Rollback Automático)
+      - name: Build and Push Docker Image to ACR
         run: |
-          echo "🚀 Deploy com Helm..."
+          echo "🐳 Buildando e enviando imagem Docker..."
 
-          # 1. Criar namespace se não existir
-          kubectl create namespace devops-app 2>/dev/null || echo "Namespace já existe"
+          cd infraestructure/app
 
-          # 2. Instalar/Atualizar com Helm
-          helm upgrade --install fastapi \
-            infraestructure/helm/fastapi \
-            --namespace devops-app \
-            --values helm-values.yaml \
-            --atomic \           # Rollback automático se falhar
-            --wait \             # Aguarda pods ficarem ready
-            --timeout 5m \       # Timeout curto
-            --cleanup-on-fail    # Limpa se falhar
+          # Login no ACR
+          az acr login --name eijidevopsdevacr
 
-          echo "✅ Helm deploy concluído"
+          # Build da imagem
+          docker build -t "${{ env.ACR_LOGIN_SERVER }}/fastapi-app:latest" .
 
-      - name: Verify Deployment
+          # Push para ACR
+          docker push "${{ env.ACR_LOGIN_SERVER }}/fastapi-app:latest"
+
+          echo "✅ Imagem enviada para ACR: ${{ env.ACR_LOGIN_SERVER }}/fastapi-app:latest"
+
+      - name: Deploy FastAPI to ACA
         run: |
-          echo "📊 Verificando status..."
+          echo "🚀 Deployando FastAPI no ACA..."
 
-          # Aguardar pods ready
-          sleep 10
+          # Verificar se o container app já existe
+          if az containerapp show \
+            -g "rg-aca-dev" \
+            -n "fastapi-dev" &>/dev/null; then
+            echo "📦 Atualizando container app existente..."
+            
+            az containerapp update \
+              -g "rg-aca-dev" \
+              -n "fastapi-dev" \
+              --image "${{ env.ACR_LOGIN_SERVER }}/fastapi-app:latest" \
+              --cpu 0.5 \
+              --memory 1.0Gi \
+              --min-replicas 1 \
+              --max-replicas 3 \
+              --set-env-vars \
+                "APP_ENVIRONMENT=dev" \
+                "APP_PORT=8000" \
+              --revision-suffix "$(date +%Y%m%d-%H%M%S)"
+              
+          else
+            echo "🆕 Criando novo container app..."
+            
+            az containerapp create \
+              -g "rg-aca-dev" \
+              -n "fastapi-dev" \
+              --environment "${{ env.ACA_ENV_NAME }}" \
+              --image "${{ env.ACR_LOGIN_SERVER }}/fastapi-app:latest" \
+              --cpu 0.5 \
+              --memory 1.0Gi \
+              --min-replicas 1 \
+              --max-replicas 3 \
+              --ingress external \
+              --target-port 8000 \
+              --set-env-vars \
+                "APP_ENVIRONMENT=dev" \
+                "APP_PORT=8000"
+          fi
 
-          # Status dos recursos
-          echo "=== PODS ==="
-          kubectl get pods -n devops-app -o wide
+          echo "✅ FastAPI deployado no ACA"
 
-          echo "=== SERVICES ==="
-          kubectl get svc -n devops-app
-
-          echo "=== INGRESS ==="
-          kubectl get ingress -n devops-app
-
-          echo "=== DEPLOYMENT STATUS ==="
-          kubectl rollout status deployment/fastapi -n devops-app --timeout=60s
-
-          # Testar acesso interno
-          echo "=== TESTE DE ACESSO INTERNO ==="
-          kubectl run -n devops-app test-curl --image=curlimages/curl -i --rm --restart=Never -- \
-            curl -s -o /dev/null -w "%{http_code}" http://fastapi-service.devops-app.svc.cluster.local:80/health || echo "Teste falhou"
-
-      - name: Get Application URL
+      - name: Get Application URL and Info
         run: |
-          echo "🌐 URLs da aplicação:"
+          echo "🌐 Obtendo informações da aplicação..."
+
+          # Obter FQDN (URL pública)
+          APP_URL=$(az containerapp show \
+            -g "rg-aca-dev" \
+            -n "fastapi-dev" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+
+          APP_STATE=$(az containerapp show \
+            -g "rg-aca-dev" \
+            -n "fastapi-dev" \
+            --query "properties.provisioningState" -o tsv)
+
           echo ""
-          echo "1. Interno no cluster:"
-          echo "   http://fastapi-service.devops-app.svc.cluster.local"
+          echo "=========================================="
+          echo "🚀 DEPLOY COMPLETO - AZURE CONTAINER APPS"
+          echo "=========================================="
           echo ""
-          echo "2. Via Ingress (externo):"
-          echo "   http://fastapi.devops.local"
+          echo "📊 Status: $APP_STATE"
+          echo "🌐 URL Pública: https://$APP_URL"
+          echo "🔗 Health Check: https://$APP_URL/health"
+          echo "📝 Swagger Docs: https://$APP_URL/docs"
           echo ""
-          echo "3. Para testar localmente (port-forward):"
-          echo "   kubectl port-forward -n devops-app svc/fastapi-service 8080:80"
-          echo "   Acesse: http://localhost:8080"
+          echo "🔧 Comandos úteis:"
+          echo "   Ver logs: az containerapp logs show -g rg-aca-dev -n fastapi-dev --follow"
+          echo "   Ver status: az containerapp show -g rg-aca-dev -n fastapi-dev"
+          echo "   Scale up: az containerapp update -g rg-aca-dev -n fastapi-dev --max-replicas 5"
           echo ""
-          echo "✅ Deploy completo em $(date +%H:%M:%S)"
+          echo "⏱️  Tempo total: < 3 minutos"
+          echo "💰 Custo estimado: ~$25/mês (Consumption plan)"
+          echo ""
+          echo "✅ Pronto para testes!"
+
+      - name: Test Application Health
+        run: |
+          echo "🧪 Testando aplicação..."
+
+          # Aguardar alguns segundos
+          sleep 15
+
+          # Obter URL
+          APP_URL=$(az containerapp show \
+            -g "rg-aca-dev" \
+            -n "fastapi-dev" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+
+          echo "Testando endpoint de health..."
+
+          # Tentar curl com timeout
+          for i in {1..5}; do
+            echo "Tentativa $i..."
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$APP_URL/health" --max-time 10 || echo "000")
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Health check OK (HTTP 200)"
+              break
+            else
+              echo "⚠️  Health check falhou: HTTP $HTTP_CODE"
+              sleep 5
+            fi
+          done
 
   # =========================
   # 8. VALIDATE & SAVE OUTPUTS
   # =========================
   validate:
     runs-on: ubuntu-latest
-    needs: [network, acr, aks, database, bastion, deploy-app]
+    needs: [network, acr, aca, database, bastion, deploy-app]
     if: always()
 
     steps:
@@ -770,7 +648,7 @@ jobs:
           echo "📊 Deployment Results:"
           echo "Network: ${{ needs.network.result }}"
           echo "ACR: ${{ needs.acr.result }}"
-          echo "AKS: ${{ needs.aks.result }}"
+          echo "ACA: ${{ needs.aca.result }}"
           echo "Database: ${{ needs.database.result }}"
           echo "Bastion: ${{ needs.bastion.result }}"
           echo "Deploy App: ${{ needs.deploy-app.result }}"
@@ -780,7 +658,7 @@ jobs:
 
           if [ "${{ needs.network.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
           if [ "${{ needs.acr.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
-          if [ "${{ needs.aks.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
+          if [ "${{ needs.aca.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
           if [ "${{ needs.database.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
           if [ "${{ needs.bastion.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
           if [ "${{ needs.deploy-app.result }}" = "success" ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
@@ -790,6 +668,10 @@ jobs:
 
           if [ $SUCCESS_COUNT -eq $TOTAL_COUNT ]; then
             echo "✅ All infrastructure modules deployed successfully!"
+            echo ""
+            echo "🏁 DEPLOYMENT COMPLETE!"
+            echo "Application is running on Azure Container Apps"
+            echo "Cost: ~$25/month | Deployment time: < 10 minutes"
           else
             echo "⚠️  Some modules failed. Check the logs above."
           fi

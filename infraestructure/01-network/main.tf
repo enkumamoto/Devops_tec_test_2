@@ -22,16 +22,16 @@ locals {
   vnet_name = var.vnet_name != "" ? var.vnet_name : "vnet-${local.naming_prefix}"
 
   nsg_names = {
-    aks      = "nsg-${local.naming_prefix}-aks"
+    aca      = "nsg-${local.naming_prefix}-aca"
     database = "nsg-${local.naming_prefix}-database"
     bastion  = "nsg-${local.naming_prefix}-bastion"
   }
   route_table_names = {
-    aks = "rt-${local.naming_prefix}-aks"
+    aca = "rt-${local.naming_prefix}-aca"
   }
 
   subnet_names = {
-    aks      = "snet-${local.naming_prefix}-aks"
+    aca      = "snet-${local.naming_prefix}-aca"
     database = "snet-${local.naming_prefix}-database"
     bastion  = "snet-${local.naming_prefix}-bastion"
   }

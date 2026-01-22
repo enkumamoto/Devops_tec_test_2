@@ -13,8 +13,8 @@ variable "vnet_address_space" {
   type        = list(string)
 }
 
-variable "aks_subnet_address_prefixes" {
-  description = "CIDR for AKS subnet"
+variable "aca_subnet_address_prefixes" {
+  description = "CIDR for aca subnet"
   type        = list(string)
 }
 

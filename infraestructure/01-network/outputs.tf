@@ -26,16 +26,16 @@ output "vnet_location" {
   value = azurerm_virtual_network.devops.location
 }
 
-output "aks_subnet_id" {
-  value = azurerm_subnet.aks.id
+output "aca_subnet_id" {
+  value = azurerm_subnet.aca.id
 }
 
-output "aks_subnet_name" {
-  value = azurerm_subnet.aks.name
+output "aca_subnet_name" {
+  value = azurerm_subnet.aca.name
 }
 
-output "aks_subnet_address_prefixes" {
-  value = azurerm_subnet.aks.address_prefixes
+output "aca_subnet_address_prefixes" {
+  value = azurerm_subnet.aca.address_prefixes
 }
 
 output "database_subnet_id" {
@@ -64,7 +64,7 @@ output "bastion_subnet_address_prefixes" {
 
 output "all_subnet_ids" {
   value = {
-    aks      = azurerm_subnet.aks.id
+    aca      = azurerm_subnet.aca.id
     database = azurerm_subnet.database.id
     bastion  = azurerm_subnet.bastion.id
   }
@@ -92,10 +92,10 @@ output "module_summary" {
       location      = azurerm_virtual_network.devops.location
     }
     subnets = {
-      aks = {
-        id               = azurerm_subnet.aks.id
-        name             = azurerm_subnet.aks.name
-        address_prefixes = azurerm_subnet.aks.address_prefixes
+      aca = {
+        id               = azurerm_subnet.aca.id
+        name             = azurerm_subnet.aca.name
+        address_prefixes = azurerm_subnet.aca.address_prefixes
       }
       database = {
         id               = azurerm_subnet.database.id
