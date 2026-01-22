@@ -545,8 +545,6 @@ jobs:
       - name: Debug Bastion Subnet ID
         run: |
           echo "Bastion Subnet ID recebido: '${{ needs.network.outputs.bastion_subnet_id }}'"
-        outputs:
-        bastion_subnet_id: ${{ steps.terraform.outputs.bastion_subnet_id }}
 
       - name: Terraform Apply - Bastion
         if: ${{ github.event.inputs.tf_action == 'apply' }}
